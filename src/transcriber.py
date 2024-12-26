@@ -91,7 +91,7 @@ class EnhancedTranscriber:
         
         return aligned_transcript
 
-    def process_audio(self, audio_path: str, language: str = None) -> Dict[str, Any]:
+    def process_audio(self, audio_path: str) -> Dict[str, Any]:
         """Process audio file with transcription and speaker diarization"""
         try:
             temp_path = self.audio_processor.preprocess(audio_path)
@@ -102,7 +102,6 @@ class EnhancedTranscriber:
                 "aligned_transcript": None,
                 "metadata": {
                     "model": self.model_name,
-                    "language": language,
                     "audio_path": audio_path
                 }
             }
@@ -112,12 +111,6 @@ class EnhancedTranscriber:
                 temp_path,
                 return_timestamps="word"
                 )
-            
-            # Get detected language from transcription
-            detected_lang = transcription.get("language", "en")
-
-            # Update result metadata with detected language
-            result["language"] = detected_lang
             
             result["transcript"] = {"text": transcription["text"]}
             
@@ -163,7 +156,6 @@ class EnhancedTranscriber:
         with open(output_path, "w", encoding="utf-8") as f:
             # Write metadata
             f.write(f"Transcription using {result['metadata']['model']}\n")
-            f.write(f"Language: {result['metadata']['language']}\n")
             f.write(f"Audio file: {result['metadata']['audio_path']}\n\n")
             
             # Write aligned transcript if available
