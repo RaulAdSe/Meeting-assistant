@@ -1,16 +1,22 @@
 from transformers import pipeline
 import torch
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List, Tuple
 from dotenv import load_dotenv
 import os
 from pyannote.audio import Pipeline
 from .config import ROOT_DIR, OUTPUT_DIR
 from .audio_processor import AudioProcessor
+import logging
 
 class EnhancedTranscriber:
-    def __init__(self, model_name: str = "openai/whisper-base"):
+    def __init__(self, model_name: str = "openai/whisper-base", verbose: bool = False):
         """Initialize transcription and diarization models"""
+        if not verbose:
+            # Suppress non-error logging
+            logging.getLogger("transformers").setLevel(logging.ERROR)
+            logging.getLogger("speechbrain.utils.quirks").setLevel(logging.ERROR)
+        
         # Ensure output directory exists
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         
@@ -19,18 +25,14 @@ class EnhancedTranscriber:
         
         # Load environment variables
         env_path = ROOT_DIR / '.env'
-        if env_path.exists():
-            print(f".env file found at: {env_path}")
-        else:
-            print(".env file not found")
-            
         load_dotenv(env_path)
         self.hf_token = os.getenv('HF_TOKEN')
         if not self.hf_token:
             raise ValueError("HF_TOKEN not found in .env file")
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"Device set to use {self.device}")
+        if verbose:
+            print(f"Device set to use {self.device}")
         
         # Initialize transcription model
         self.model_name = model_name
@@ -49,28 +51,55 @@ class EnhancedTranscriber:
             if self.device == "cuda":
                 self.diarization_pipeline.to(torch.device("cuda"))
         except Exception as e:
-            print(f"Error initializing diarization: {str(e)}")
-            print("Continuing with transcription only...")
+            if verbose:
+                print(f"Error initializing diarization: {str(e)}")
             self.diarization_pipeline = None
 
-    def process_audio(self, audio_path: str, language: str = "en") -> Dict[str, Any]:
-        """
-        Process audio file with transcription and speaker diarization
+    def align_transcript_with_speakers(self, transcript_chunks: List[Dict], speaker_segments: List[Dict]) -> List[Tuple[str, str]]:
+        """Align transcript chunks with speaker segments"""
+        aligned_transcript = []
         
-        Args:
-            audio_path: Path to audio file
-            language: Language code for transcription
+        for chunk in transcript_chunks:
+            if 'timestamp' not in chunk or not chunk.get('text'):
+                continue
+                
+            start_time = chunk['timestamp'][0]
+            end_time = chunk['timestamp'][1]
+            text = chunk['text'].strip()
             
-        Returns:
-            Dictionary containing transcription and metadata
-        """
+            # Find the speaker who was talking during this chunk
+            speaker = None
+            max_overlap = 0
+            
+            for segment in speaker_segments:
+                # Calculate overlap between chunk and speaker segment
+                overlap_start = max(start_time, segment['start'])
+                overlap_end = min(end_time, segment['end'])
+                
+                if overlap_end > overlap_start:
+                    overlap_duration = overlap_end - overlap_start
+                    if overlap_duration > max_overlap:
+                        max_overlap = overlap_duration
+                        speaker = segment['speaker']
+            
+            if speaker and text:
+                # Add to aligned transcript, combining consecutive chunks from same speaker
+                if aligned_transcript and aligned_transcript[-1][0] == speaker:
+                    aligned_transcript[-1] = (speaker, aligned_transcript[-1][1] + " " + text)
+                else:
+                    aligned_transcript.append((speaker, text))
+        
+        return aligned_transcript
+
+    def process_audio(self, audio_path: str, language: str = "en") -> Dict[str, Any]:
+        """Process audio file with transcription and speaker diarization"""
         try:
-            # Process audio to temp file
             temp_path = self.audio_processor.preprocess(audio_path)
             
             result = {
                 "transcript": None,
                 "diarization": None,
+                "aligned_transcript": None,
                 "metadata": {
                     "model": self.model_name,
                     "language": language,
@@ -78,11 +107,21 @@ class EnhancedTranscriber:
                 }
             }
 
-            # Perform transcription on processed audio
-            transcription = self.transcriber(temp_path)
+            # Perform transcription
+            transcription = self.transcriber(
+                temp_path,
+                return_timestamps="word"
+            )
+            
             result["transcript"] = {"text": transcription["text"]}
+            
+            # Store chunks for alignment
+            chunks = transcription.get('chunks', [])
+            if not chunks and transcription.get('text'):
+                # If no chunks, create a single chunk
+                chunks = [{'text': transcription['text'], 'timestamp': [0, -1]}]
 
-            # Perform diarization if available
+            # Perform diarization
             if self.diarization_pipeline:
                 try:
                     diarization = self.diarization_pipeline(temp_path)
@@ -91,25 +130,25 @@ class EnhancedTranscriber:
                         segments.append({
                             "start": turn.start,
                             "end": turn.end,
-                            "speaker": speaker
+                            "speaker": f"SPEAKER_{speaker.split('_')[-1]}"
                         })
                     result["diarization"] = segments
+                    
+                    # Align transcript with speakers
+                    if chunks:
+                        result["aligned_transcript"] = self.align_transcript_with_speakers(chunks, segments)
                 except Exception as e:
                     print(f"Error during diarization: {str(e)}")
 
-            # Save transcript to output directory
+            # Save transcript
             transcript_path = OUTPUT_DIR / f"{Path(audio_path).stem}_transcript.txt"
             self.save_transcript(result, transcript_path)
 
             return result
             
         finally:
-            # Clean up temp file
-            try:
-                if 'temp_path' in locals() and os.path.exists(temp_path):
-                    os.remove(temp_path)
-            except Exception as e:
-                print(f"Warning: Could not remove temporary file: {e}")
+            if 'temp_path' in locals() and os.path.exists(temp_path):
+                os.remove(temp_path)
 
     def save_transcript(self, result: Dict[str, Any], output_path: Path):
         """Save transcription and diarization results to file"""
@@ -121,13 +160,29 @@ class EnhancedTranscriber:
             f.write(f"Language: {result['metadata']['language']}\n")
             f.write(f"Audio file: {result['metadata']['audio_path']}\n\n")
             
-            # Write transcript
-            f.write("Transcript:\n")
-            if result["transcript"]:
-                f.write(result["transcript"]["text"])
+            # Write aligned transcript if available
+            if result.get("aligned_transcript"):
+                f.write("Conversation:\n\n")
+                current_speaker = None
+                current_text = []
+                
+                for speaker, text in result["aligned_transcript"]:
+                    if speaker != current_speaker:
+                        # Write accumulated text for previous speaker
+                        if current_speaker and current_text:
+                            f.write(f"{current_speaker}: {' '.join(current_text)}\n\n")
+                        current_speaker = speaker
+                        current_text = [text]
+                    else:
+                        current_text.append(text)
+                
+                # Write final speaker's text
+                if current_speaker and current_text:
+                    f.write(f"{current_speaker}: {' '.join(current_text)}\n\n")
             
-            # Write diarization results if available
-            if result["diarization"]:
-                f.write("\n\nSpeaker Segments:\n")
-                for segment in result["diarization"]:
-                    f.write(f"[{segment['start']:.2f}s -> {segment['end']:.2f}s] {segment['speaker']}\n")
+            else:
+                # Fall back to raw transcript if no alignment
+                f.write("Transcript:\n\n")
+                if result["transcript"]:
+                    f.write(result["transcript"]["text"])
+                    f.write("\n\n")
