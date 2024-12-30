@@ -4,6 +4,8 @@ from ..models.speaker import Speaker, SpeakerEmbedding, AudioSegment
 from .connection import DatabaseConnection
 import uuid
 from datetime import datetime
+import uuid
+import psycopg2
 
 class SpeakerRepository:
     def __init__(self):
@@ -134,3 +136,35 @@ class SpeakerRepository:
                 )
         finally:
             conn.close()
+    
+    def cleanup_unmapped_speakers(self):
+        """Remove speakers without any embeddings."""
+        conn = self.db.get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    DELETE FROM speakers 
+                    WHERE id NOT IN (
+                        SELECT DISTINCT speaker_id 
+                        FROM speaker_embeddings
+                    )
+                """)
+                conn.commit()
+        finally:
+            conn.close()
+
+    def get_speaker_by_external_id(self, external_id: str) -> Optional[Speaker]:
+        """Get a speaker by external ID."""
+        conn = self.db.get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id FROM speakers WHERE external_id = %s
+                """, (external_id,))
+                row = cur.fetchone()
+                if row:
+                    return self.get_speaker(uuid.UUID(str(row[0])))
+                return None
+        finally:
+            conn.close()
+

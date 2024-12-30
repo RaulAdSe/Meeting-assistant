@@ -46,3 +46,11 @@ CREATE TRIGGER update_speakers_updated_at
     BEFORE UPDATE ON speakers
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
+
+ALTER TABLE speaker_embeddings 
+ADD CONSTRAINT fk_speaker
+FOREIGN KEY (speaker_id) 
+REFERENCES speakers(id)
+ON DELETE CASCADE;
+
+ALTER TABLE speakers ADD CONSTRAINT unique_external_id UNIQUE (external_id);

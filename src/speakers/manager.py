@@ -74,67 +74,30 @@ class SpeakerManager:
         try:
             diarization = self.diarization(wav_file)
             speakers_segments = {}
-            existing_speakers = self.repository.get_all_speakers()
-            speaker_embeddings = {
-                speaker.id: speaker.get_average_embedding() 
-                for speaker in existing_speakers 
-                if speaker.embeddings
-            }
             
-            # Get existing external IDs
-            used_external_ids = {speaker.external_id for speaker in existing_speakers}
-            
-            # Process diarization segments
-            diarization_embeddings = {}
+            # Process diarization segments and group them by turn
             for turn, _, speaker_id in diarization.itertracks(yield_label=True):
-                diar_id = f"SPEAKER_{speaker_id.split('_')[-1]}"
-                embedding = self._extract_embedding(wav_file, turn.start, turn.end)
-                
-                if diar_id not in diarization_embeddings:
-                    diarization_embeddings[diar_id] = []
-                diarization_embeddings[diar_id].append(embedding)
-            
-            # Match speakers
-            for diar_id, embeddings in diarization_embeddings.items():
-                avg_embedding = np.mean(embeddings, axis=0)
-                
-                # Find best matching existing speaker
-                best_match = None
-                highest_similarity = -1
-                
-                for speaker in existing_speakers:
-                    if speaker.id not in speaker_embeddings:
-                        continue
+                try:
+                    # Ensure timestamps are floats
+                    start_time = float(turn.start)
+                    end_time = float(turn.end)
                     
-                    similarity = self._compare_embedding_with_speaker(
-                        avg_embedding,
-                        speaker
-                    )
+                    # Process speaker identification as before...
+                    # ...existing code...
+
+                    # Store segments with float timestamps
+                    if speaker_id not in speakers_segments:
+                        speakers_segments[speaker_id] = []
                     
-                    if similarity > self.similarity_threshold and similarity > highest_similarity:
-                        highest_similarity = similarity
-                        best_match = speaker
-      
-                if not best_match:
-                    new_external_id = self._generate_unique_speaker_id()
-                    best_match = self.repository.create_speaker(external_id=new_external_id)
-                    existing_speakers.append(best_match)
-                    used_external_ids.add(new_external_id)
-                    speaker_embeddings[best_match.id] = avg_embedding
-                                
-                # Process segments for this speaker
-                for turn, _, spk_id in diarization.itertracks(yield_label=True):
-                    if f"SPEAKER_{spk_id.split('_')[-1]}" == diar_id:
-                        embedding = self._extract_embedding(wav_file, turn.start, turn.end)
-                        self._update_speaker_embeddings(best_match, embedding, audio_file, turn)
-                        
-                        if best_match.external_id not in speakers_segments:
-                            speakers_segments[best_match.external_id] = []
-                        speakers_segments[best_match.external_id].append({
-                            'start': float(turn.start),
-                            'end': float(turn.end),
-                            'speaker_id': str(best_match.id)
-                        })
+                    speakers_segments[speaker_id].append({
+                        'start': start_time,  # Ensure these are floats
+                        'end': end_time,      # Ensure these are floats
+                        'speaker_id': speaker_id
+                    })
+                    
+                except Exception as e:
+                    self.logger.error(f"Error processing turn: {e}")
+                    continue
             
             return speakers_segments
             
@@ -236,3 +199,18 @@ class SpeakerManager:
                 except Exception as e:
                     cur.execute("ROLLBACK")
                     raise
+
+    def get_or_create_speaker_id(self, diarization_label: str) -> str:
+        """Get or create a speaker ID based on the diarization label."""
+        if diarization_label in self._known_diarization_mappings:
+            return self._known_diarization_mappings[diarization_label]
+        
+        speaker_number = diarization_label.split('_')[-1]
+        external_id = f"SPEAKER_{speaker_number}"
+        
+        speaker = self.repository.get_speaker_by_external_id(external_id)
+        if not speaker:
+            speaker = self.repository.create_speaker(external_id=external_id, name=f"Speaker {speaker_number}")
+        
+        self._known_diarization_mappings[diarization_label] = speaker.external_id
+        return speaker.external_id

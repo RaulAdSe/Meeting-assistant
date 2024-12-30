@@ -55,3 +55,16 @@ class DatabaseConnection:
             print(f"- DB_NAME: {self.db_name}")
             print(f"- DB_USER: {self.db_user}")
             raise
+
+
+    def cleanup_database(self):
+        conn = self.get_connection()
+        try:
+            with conn.cursor() as cur:
+                # Remove embeddings without speakers
+                cur.execute("DELETE FROM speaker_embeddings WHERE speaker_id NOT IN (SELECT id FROM speakers)")
+                # Remove speakers without embeddings
+                cur.execute("DELETE FROM speakers WHERE id NOT IN (SELECT DISTINCT speaker_id FROM speaker_embeddings)")
+                conn.commit()
+        finally:
+            conn.close()

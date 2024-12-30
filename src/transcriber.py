@@ -8,6 +8,7 @@ from pyannote.audio import Pipeline
 from .config import ROOT_DIR, OUTPUT_DIR
 from .audio_processor import AudioProcessor
 import logging
+from .speakers.manager import SpeakerManager  # Import SpeakerManager
 
 class EnhancedTranscriber:
     def __init__(self, model_name: str = "openai/whisper-base", verbose: bool = False):
@@ -54,6 +55,8 @@ class EnhancedTranscriber:
             if verbose:
                 print(f"Error initializing diarization: {str(e)}")
             self.diarization_pipeline = None
+
+        self.speaker_manager = SpeakerManager()  # Initialize SpeakerManager
 
     def align_transcript_with_speakers(self, transcript_chunks: List[Dict], speaker_segments: List[Dict]) -> List[Tuple[str, str]]:
         """Align transcript chunks with speaker segments"""
@@ -126,10 +129,11 @@ class EnhancedTranscriber:
                     diarization = self.diarization_pipeline(temp_path)
                     segments = []
                     for turn, _, speaker in diarization.itertracks(yield_label=True):
+                        speaker_id = self.speaker_manager.get_or_create_speaker_id(f"SPEAKER_{speaker.split('_')[-1]}")
                         segments.append({
                             "start": turn.start,
                             "end": turn.end,
-                            "speaker": f"SPEAKER_{speaker.split('_')[-1]}"
+                            "speaker": speaker_id
                         })
                     result["diarization"] = segments
                     
