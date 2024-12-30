@@ -10,35 +10,47 @@ class SpeakerRepository:
         self.db = DatabaseConnection.get_instance()
     
     def create_speaker(self, external_id: str, name: Optional[str] = None) -> Speaker:
-            """Create a new speaker in the database."""
-            conn = self.db.get_connection()
-            try:
-                with conn.cursor() as cur:
+        """Create a new speaker in the database."""
+        conn = self.db.get_connection()
+        try:
+            with conn.cursor() as cur:
+                while True:
                     speaker_id = str(uuid.uuid4())
                     now = datetime.now()
-                    
-                    cur.execute("""
-                        INSERT INTO speakers (id, external_id, name, created_at, updated_at)
-                        VALUES (%s::uuid, %s, %s, %s, %s)
-                        RETURNING id, created_at, updated_at
-                    """, (speaker_id, external_id, name, now, now))
-                    
-                    speaker_id, created_at, updated_at = cur.fetchone()
-                    conn.commit()
-                    
-                    return Speaker(
-                        id=uuid.UUID(str(speaker_id)),
-                        external_id=external_id,
-                        name=name,
-                        created_at=created_at,
-                        updated_at=updated_at
-                    )
-            finally:
-                conn.close()
+                    try:
+                        cur.execute("""
+                            INSERT INTO speakers (id, external_id, name, created_at, updated_at)
+                            VALUES (%s::uuid, %s, %s, %s, %s)
+                            RETURNING id, created_at, updated_at
+                        """, (speaker_id, external_id, name, now, now))
+                        speaker_id, created_at, updated_at = cur.fetchone()
+                        conn.commit()
+                        return Speaker(
+                            id=uuid.UUID(str(speaker_id)),
+                            external_id=external_id,
+                            name=name,
+                            created_at=created_at,
+                            updated_at=updated_at
+                        )
+                    except psycopg2.IntegrityError:
+                        conn.rollback()
+                        # Increment external_id number
+                        num = int(external_id.split('_')[1]) + 1
+                        external_id = f"SPEAKER_{num:02d}"
+        finally:
+            conn.close()
     
     def add_embedding(self, speaker_id: uuid.UUID, embedding: np.ndarray, 
                      audio_segment: AudioSegment) -> None:
         """Add a new embedding for a speaker."""
+        # Ensure embedding is 512-dimensional
+        if embedding.shape != (512,):
+            if embedding.shape[0] == 256:
+                # Pad with zeros to match 512
+                embedding = np.pad(embedding, (0, 256))
+            else:
+                raise ValueError(f"Unexpected embedding shape: {embedding.shape}")
+                
         conn = self.db.get_connection()
         try:
             with conn.cursor() as cur:
@@ -73,10 +85,11 @@ class SpeakerRepository:
             conn.close()
 
     def get_speaker(self, speaker_id: uuid.UUID) -> Optional[Speaker]:
-        """Get a speaker with all their embeddings."""
+        """Get a speaker with embeddings."""
         conn = self.db.get_connection()
         try:
             with conn.cursor() as cur:
+                # Get speaker info
                 cur.execute("""
                     SELECT external_id, name, created_at, updated_at
                     FROM speakers WHERE id = %s::uuid
@@ -88,6 +101,7 @@ class SpeakerRepository:
                     
                 external_id, name, created_at, updated_at = row
                 
+                # Get embeddings
                 cur.execute("""
                     SELECT id, embedding, audio_file, segment_start, segment_end, created_at
                     FROM speaker_embeddings WHERE speaker_id = %s::uuid
@@ -98,8 +112,11 @@ class SpeakerRepository:
                     embedding_id, embedding_bytes, audio_file, start, end, emb_created_at = row
                     
                     embedding = np.frombuffer(embedding_bytes)
-                    audio_segment = AudioSegment(start=start, end=end, audio_file=audio_file)
+                    # Ensure 512-dimensional embedding
+                    if embedding.shape[0] == 256:
+                        embedding = np.pad(embedding, (0, 256))
                     
+                    audio_segment = AudioSegment(start=start, end=end, audio_file=audio_file)
                     embeddings.append(SpeakerEmbedding(
                         id=uuid.UUID(str(embedding_id)),
                         embedding=embedding,

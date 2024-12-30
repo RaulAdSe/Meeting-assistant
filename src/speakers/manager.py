@@ -20,6 +20,11 @@ class SpeakerManager:
         # Configure logging
         logging.basicConfig(level=logging.DEBUG if debug else logging.INFO)
         self.logger = logging.getLogger(__name__)
+
+        self.similarity_threshold = 0.85
+        self.max_segments_per_speaker = 10
+        self._known_diarization_mappings = {}  # Maps diarization IDs to database speakers
+        
         
         # Initialize database repository
         try:
@@ -41,11 +46,8 @@ class SpeakerManager:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.logger.info(f"Using device: {self.device}")
         
-        self.similarity_threshold = 0.75
-        
         # Initialize speaker embedding model
         try:
-            self.logger.info("Initializing speaker embedding model...")
             self.embedding_model = PretrainedSpeakerEmbedding(
                 "pyannote/embedding",
                 use_auth_token=self.hf_token
@@ -68,99 +70,116 @@ class SpeakerManager:
             raise
 
     def process_audio(self, audio_file: str) -> Dict[str, List[Dict[str, float]]]:
-        """Process audio file and store speaker data in database."""
-        self.logger.info(f"Processing audio file: {audio_file}")
-        
-        # Convert audio to WAV if needed
-        if not audio_file.lower().endswith('.wav'):
-            wav_file = self._convert_to_wav(audio_file)
-        else:
-            wav_file = audio_file
-            
+        wav_file = self._convert_to_wav(audio_file)
         try:
-            # Run diarization
             diarization = self.diarization(wav_file)
-            
-            # Create speakers dict to store results
             speakers_segments = {}
+            existing_speakers = self.repository.get_all_speakers()
+            speaker_embeddings = {
+                speaker.id: speaker.get_average_embedding() 
+                for speaker in existing_speakers 
+                if speaker.embeddings
+            }
             
-            # Process each speech turn
+            # Get existing external IDs
+            used_external_ids = {speaker.external_id for speaker in existing_speakers}
+            
+            # Process diarization segments
+            diarization_embeddings = {}
             for turn, _, speaker_id in diarization.itertracks(yield_label=True):
-                if speaker_id not in speakers_segments:
-                    # Try to find existing speaker or create new one
-                    speaker = self._get_or_create_speaker(speaker_id)
-                    speakers_segments[speaker_id] = []
-                
-                # Create audio segment
-                segment = AudioSegment(
-                    start=float(turn.start),
-                    end=float(turn.end),
-                    audio_file=audio_file
-                )
-                
-                # Extract embedding
+                diar_id = f"SPEAKER_{speaker_id.split('_')[-1]}"
                 embedding = self._extract_embedding(wav_file, turn.start, turn.end)
                 
-                # Store embedding in database
-                self.repository.add_embedding(
-                    speaker_id=uuid.UUID(speakers_segments[speaker_id][0]['speaker_id']) 
-                        if speakers_segments[speaker_id] else speaker.id,
-                    embedding=embedding,
-                    audio_segment=segment
-                )
+                if diar_id not in diarization_embeddings:
+                    diarization_embeddings[diar_id] = []
+                diarization_embeddings[diar_id].append(embedding)
+            
+            # Match speakers
+            for diar_id, embeddings in diarization_embeddings.items():
+                avg_embedding = np.mean(embeddings, axis=0)
                 
-                # Add segment information
-                speakers_segments[speaker_id].append({
-                    'start': float(turn.start),
-                    'end': float(turn.end),
-                    'speaker_id': str(speaker.id)
-                })
+                # Find best matching existing speaker
+                best_match = None
+                highest_similarity = -1
+                
+                for speaker in existing_speakers:
+                    if speaker.id not in speaker_embeddings:
+                        continue
+                    
+                    similarity = self._compare_embedding_with_speaker(
+                        avg_embedding,
+                        speaker
+                    )
+                    
+                    if similarity > self.similarity_threshold and similarity > highest_similarity:
+                        highest_similarity = similarity
+                        best_match = speaker
+      
+                if not best_match:
+                    new_external_id = self._generate_unique_speaker_id()
+                    best_match = self.repository.create_speaker(external_id=new_external_id)
+                    existing_speakers.append(best_match)
+                    used_external_ids.add(new_external_id)
+                    speaker_embeddings[best_match.id] = avg_embedding
+                                
+                # Process segments for this speaker
+                for turn, _, spk_id in diarization.itertracks(yield_label=True):
+                    if f"SPEAKER_{spk_id.split('_')[-1]}" == diar_id:
+                        embedding = self._extract_embedding(wav_file, turn.start, turn.end)
+                        self._update_speaker_embeddings(best_match, embedding, audio_file, turn)
+                        
+                        if best_match.external_id not in speakers_segments:
+                            speakers_segments[best_match.external_id] = []
+                        speakers_segments[best_match.external_id].append({
+                            'start': float(turn.start),
+                            'end': float(turn.end),
+                            'speaker_id': str(best_match.id)
+                        })
             
             return speakers_segments
             
         finally:
-            # Cleanup temporary WAV file if we created one
             if wav_file != audio_file and os.path.exists(wav_file):
                 os.remove(wav_file)
 
-    def _get_or_create_speaker(self, external_id: str) -> Speaker:
-        """Find existing speaker or create new one."""
-        try:
-            # Get all existing speakers with this external_id
-            with self.repository.db.get_connection() as conn:
-                cur = conn.cursor()
-                cur.execute("""
-                    SELECT id, name FROM speakers 
-                    WHERE external_id = %s AND name IS NOT NULL 
-                    ORDER BY created_at ASC LIMIT 1
-                """, (external_id,))
-                row = cur.fetchone()
-                
-                if row:
-                    return self.repository.get_speaker(uuid.UUID(str(row[0])))
-                
-                # Create new speaker with proper name
-                speaker_number = external_id.split('_')[-1]
-                return self.repository.create_speaker(
-                    external_id=external_id,
-                    name=f"Speaker {speaker_number}"
-                )
-        except Exception as e:
-            self.logger.error(f"Error in _get_or_create_speaker: {str(e)}")
-            raise
 
-    def _convert_to_wav(self, audio_file: str) -> str:
-        """Convert audio file to WAV format and ensure mono."""
-        audio = PydubSegment.from_file(audio_file)
-        # Convert to mono
-        audio = audio.set_channels(1)
-        
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_wav:
-            wav_path = temp_wav.name
+    def _update_speaker_embeddings(self, speaker: Speaker, embedding: np.ndarray, 
+                                    audio_file: str, turn) -> None:
+        """Update speaker embeddings, maintaining maximum number of segments."""
+        if len(speaker.embeddings) >= self.max_segments_per_speaker:
+            oldest = min(speaker.embeddings, key=lambda x: x.created_at)
+            self.repository.remove_embedding(oldest.id)
             
-        audio.export(wav_path, format='wav')
-        return wav_path
+        self.repository.add_embedding(
+            speaker_id=speaker.id,
+            embedding=embedding,
+            audio_segment=AudioSegment(
+                start=float(turn.start),
+                end=float(turn.end),
+                audio_file=audio_file
+            )
+        )
 
+    def _compare_embedding_with_speaker(self, embedding: np.ndarray, speaker: Speaker) -> float:
+        """Compare embedding with speaker's average embedding."""
+        speaker_embedding = speaker.get_average_embedding()
+        
+        # Ensure embeddings are 1-dimensional and same size
+        if embedding.ndim > 1:
+            embedding = embedding.squeeze()
+        if speaker_embedding.ndim > 1:
+            speaker_embedding = speaker_embedding.squeeze()
+            
+        # Verify shapes match
+        if embedding.shape != speaker_embedding.shape:
+            raise ValueError(f"Embedding shapes don't match: {embedding.shape} vs {speaker_embedding.shape}")
+        
+        # Calculate cosine similarity
+        similarity = np.dot(embedding, speaker_embedding) / (
+            np.linalg.norm(embedding) * np.linalg.norm(speaker_embedding)
+        )
+        return float(similarity)
+    
     def _extract_embedding(self, wav_file: str, start: float, end: float) -> np.ndarray:
         """Extract speaker embedding from an audio segment."""
         waveform, sample_rate = torchaudio.load(wav_file)
@@ -177,28 +196,43 @@ class SpeakerManager:
             embedding = self.embedding_model(segment)
             if isinstance(embedding, torch.Tensor):
                 embedding = embedding.cpu().numpy()
-        
+                
+            # Ensure consistent shape
+            if embedding.ndim > 1:
+                embedding = embedding.squeeze()
+                
+            # Verify embedding dimension
+            if embedding.shape != (512,):  # pyannote/embedding model outputs 512-dim vectors
+                raise ValueError(f"Unexpected embedding dimension: {embedding.shape}")
+                
         return embedding
-    
-    def create_speaker(self, external_id: str, name: Optional[str] = None) -> Speaker:
-        """Create a new speaker using the repository."""
-        return self.repository.create_speaker(external_id, name)
 
-    def compare_speakers(self, speaker1_id: uuid.UUID, speaker2_id: uuid.UUID) -> float:
-        """Compare two speakers using their average embeddings."""
-        try:
-            speaker1 = self.repository.get_speaker(speaker1_id)
-            speaker2 = self.repository.get_speaker(speaker2_id)
+    def _convert_to_wav(self, audio_file: str) -> str:
+        """Convert audio file to WAV format and ensure mono."""
+        audio = PydubSegment.from_file(audio_file)
+        audio = audio.set_channels(1)
+        
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_wav:
+            wav_path = temp_wav.name
             
-            if not speaker1 or not speaker2:
-                raise ValueError("One or both speakers not found")
-            
-            emb1 = speaker1.get_average_embedding()
-            emb2 = speaker2.get_average_embedding()
-            
-            # Compute cosine similarity
-            similarity = np.dot(emb1, emb2) / (np.linalg.norm(emb1) * np.linalg.norm(emb2))
-            return float(similarity)
-        except Exception as e:
-            self.logger.error(f"Error comparing speakers: {str(e)}")
-            return 0.0
+        audio.export(wav_path, format='wav')
+        return wav_path
+
+    def _generate_unique_speaker_id(self) -> str:
+        with self.repository.db.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("BEGIN")
+                try:
+                    next_id = 0
+                    while True:
+                        candidate_id = f"SPEAKER_{next_id:02d}"
+                        cur.execute("SELECT id FROM speakers WHERE external_id = %s FOR UPDATE", (candidate_id,))
+                        if not cur.fetchone():
+                            self.logger.debug(f"Found unique ID: {candidate_id}")
+                            cur.execute("COMMIT")
+                            return candidate_id
+                        next_id += 1
+                        self.logger.debug(f"ID {candidate_id} already exists, trying next")
+                except Exception as e:
+                    cur.execute("ROLLBACK")
+                    raise

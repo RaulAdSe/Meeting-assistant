@@ -44,5 +44,7 @@ class Speaker:
     def get_average_embedding(self) -> np.ndarray:
         """Calculate the average embedding for this speaker."""
         if not self.embeddings:
-            raise ValueError("No embeddings available for this speaker")
-        return np.mean([e.embedding for e in self.embeddings], axis=0)
+            # Return zero vector of correct size if no embeddings
+            return np.zeros(512)  # Use 512 for pyannote embedding size
+        embeddings = [e.embedding.squeeze() for e in self.embeddings]
+        return np.mean(embeddings, axis=0)

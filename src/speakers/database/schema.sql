@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS speakers (
 CREATE TABLE IF NOT EXISTS speaker_embeddings (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     speaker_id UUID NOT NULL REFERENCES speakers(id) ON DELETE CASCADE,
-    embedding BYTEA NOT NULL,  -- Store numpy array as binary
+    embedding BYTEA NOT NULL, -- Store numpy array as binary
     audio_file VARCHAR(512) NOT NULL,
     segment_start FLOAT NOT NULL,
     segment_end FLOAT NOT NULL,
@@ -46,9 +46,3 @@ CREATE TRIGGER update_speakers_updated_at
     BEFORE UPDATE ON speakers
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
-
--- Drop the unique constraint if it exists
-ALTER TABLE IF EXISTS speakers DROP CONSTRAINT IF EXISTS speakers_external_id_key;
-
--- Recreate the table without unique constraint
-ALTER TABLE speakers ALTER COLUMN external_id DROP NOT NULL;
