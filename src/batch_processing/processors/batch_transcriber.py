@@ -129,7 +129,7 @@ class BatchTranscriber:
             # Get speaker statistics
             speaker_stats = speaker_tracker.get_speaker_stats()
             
-            # Format and save results
+            # Format and save results using the basic transcript formatter
             formatter = TranscriptFormatter()
             transcript_path = formatter.format_session_transcript(
                 session=session,
@@ -146,7 +146,7 @@ class BatchTranscriber:
         except Exception as e:
             self.logger.error(f"Session processing error: {str(e)}")
             raise BatchProcessingError(f"Error processing session: {str(e)}")
-    
+        
     def _align_and_add_transcripts(self,
                                  result_transcripts: List[Dict],
                                  aligned_transcript: List,

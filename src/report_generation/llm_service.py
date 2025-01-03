@@ -1,195 +1,226 @@
+# src/report_generation/llm_service.py
+
 import openai
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from pathlib import Path
 import json
 from datetime import datetime
 import logging
 import os
 from dotenv import load_dotenv
-import httpx
-
-# Load environment variables from project root
-env_path = Path(__file__).parent.parent.parent / '.env'
-load_dotenv(env_path)
+from ..location.models.location import Location, LocationChange
 
 class LLMService:
-    """Handles interaction with OpenAI API for report generation"""
+    """Enhanced LLM service with Spanish output"""
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
+
+        # Get the project root directory (same level as src)
+        project_root = Path(__file__).parent.parent
+        
+        # Load environment variables from .env file at the same level as src
+        env_path = project_root.parent / '.env'
+        if not env_path.exists():
+            raise FileNotFoundError(
+                f"'.env' file not found at {env_path}. "
+                "Please create a .env file in your project root with your OPENAI_API_KEY"
+            )
+            
+        load_dotenv(env_path)
+
         self.api_key = os.getenv('OPENAI_API_KEY')
         if not self.api_key:
             raise ValueError("OPENAI_API_KEY not found in environment variables")
-            
-        # Initialize the OpenAI client with explicit configuration
-        self.client = openai.OpenAI(
-            api_key=self.api_key,
-            base_url="https://api.openai.com/v1",
-            http_client=httpx.Client()
-        )
+        self.client = openai.Client(api_key=self.api_key)
         
-        # Define function schema for structured outputs
-        self.function_schema = {
-            "name": "analyze_transcript",
-            "description": "Analyzes meeting transcript and provides structured output",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "executive_summary": {
-                        "type": "string",
-                        "description": "Brief overview of the meeting"
-                    },
-                    "key_points": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "topic": {"type": "string"},
-                                "details": {"type": "string"},
-                                "decisions": {
-                                    "type": "array",
-                                    "items": {"type": "string"}
-                                },
-                                "action_items": {
-                                    "type": "array",
-                                    "items": {"type": "string"}
-                                }
-                            }
-                        }
-                    },
-                    "participant_analysis": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "speaker_id": {"type": "string"},
-                                "contribution_summary": {"type": "string"},
-                                "key_points": {"type": "array", "items": {"type": "string"}}
-                            }
-                        }
-                    },
-                    "follow_up_required": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "item": {"type": "string"},
-                                "priority": {"type": "string"},
-                                "assigned_to": {"type": "string"}
-                            }
-                        }
-                    },
-                    "language_analysis": {
-                        "type": "object",
-                        "properties": {
-                            "languages_used": {"type": "array", "items": {"type": "string"}},
-                            "language_distribution": {"type": "string"}
-                        }
-                    }
-                },
-                "required": ["executive_summary", "key_points"]
-            }
-        }
-    
-    def analyze_transcript(self, transcript_text: str, session_info: Dict) -> Dict[str, Any]:
-        """Generate analysis from transcript using GPT-4"""
+    def analyze_transcript(
+        self,
+        transcript_text: str,
+        location_data: Dict[str, Any],
+        session_info: Dict
+    ) -> Dict[str, Any]:
+        """Generate analysis in Spanish incorporating location context"""
         try:
-            # Create analysis prompt
-            prompt = self._create_analysis_prompt(transcript_text, session_info)
+            # Create analysis prompt with location context
+            prompt = self._create_analysis_prompt(
+                transcript_text,
+                location_data,
+                session_info
+            )
             
-            # Prepare messages array with system context
-            messages = [
-                {
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{
                     "role": "system",
-                    "content": "You are a multilingual meeting analyst that provides detailed analysis. Analyze meetings in Spanish, English, and Catalan. Always provide your response in valid JSON format."
-                },
-                {
+                    "content": """Eres un analista especializado en visitas de obra que:
+                        1. Comprende terminología de construcción
+                        2. Rastrea movimiento entre diferentes áreas
+                        3. Identifica problemas técnicos y de seguridad
+                        4. Reconoce tareas pendientes específicas por ubicación
+                        
+                        IMPORTANTE: Genera SIEMPRE el análisis en español."""
+                }, {
                     "role": "user",
                     "content": prompt
-                }
-            ]
-            
-            # Get analysis from OpenAI with function calling
-            response = self.client.chat.completions.create(
-                model="gpt-4",  # or your preferred model
-                messages=messages,
-                functions=[self.function_schema],
-                function_call={"name": "analyze_transcript"},
+                }],
+                functions=[{
+                    "name": "analizar_visita_obra",
+                    "description": "Analiza visita de obra con consciencia de ubicación",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "resumen_ejecutivo": {"type": "string"},
+                            "vision_general": {
+                                "type": "object",
+                                "properties": {
+                                    "obra_principal": {"type": "string"},
+                                    "areas_visitadas": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "area": {"type": "string"},
+                                                "observaciones_clave": {"type": "array", "items": {"type": "string"}},
+                                                "problemas_identificados": {"type": "array", "items": {"type": "string"}}
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            "hallazgos_tecnicos": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ubicacion": {"type": "string"},
+                                        "hallazgo": {"type": "string"},
+                                        "severidad": {"type": "string", "enum": ["Baja", "Media", "Alta"]},
+                                        "accion_recomendada": {"type": "string"}
+                                    }
+                                }
+                            },
+                            "preocupaciones_seguridad": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ubicacion": {"type": "string"},
+                                        "preocupacion": {"type": "string"},
+                                        "prioridad": {"type": "string", "enum": ["Baja", "Media", "Alta"]},
+                                        "mitigacion": {"type": "string"}
+                                    }
+                                }
+                            },
+                            "tareas_pendientes": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ubicacion": {"type": "string"},
+                                        "tarea": {"type": "string"},
+                                        "asignado_a": {"type": "string"},
+                                        "prioridad": {"type": "string"},
+                                        "plazo": {"type": "string"}
+                                    }
+                                }
+                            },
+                            "observaciones_generales": {
+                                "type": "array",
+                                "items": {"type": "string"}
+                            }
+                        },
+                        "required": ["resumen_ejecutivo", "vision_general", "tareas_pendientes"]
+                    }
+                }],
+                function_call={"name": "analizar_visita_obra"},
                 temperature=0.3
             )
             
-            # Extract and parse the response
-            try:
-                if response.choices and response.choices[0].message.function_call:
-                    # If function calling worked, parse the arguments
-                    analysis = json.loads(response.choices[0].message.function_call.arguments)
-                else:
-                    # Fallback to parsing the content directly
-                    content = response.choices[0].message.content
-                    # Try to extract JSON from the content if it's wrapped in text
-                    try:
-                        start_idx = content.find('{')
-                        end_idx = content.rfind('}') + 1
-                        if start_idx >= 0 and end_idx > start_idx:
-                            json_str = content[start_idx:end_idx]
-                            analysis = json.loads(json_str)
-                        else:
-                            analysis = json.loads(content)
-                    except json.JSONDecodeError:
-                        # If JSON parsing fails, return a structured error response
-                        analysis = {
-                            "error": "Failed to parse response as JSON",
-                            "raw_content": content
-                        }
-                
-                # Ensure all expected fields exist, even if empty
-                analysis.setdefault('executive_summary', '')
-                analysis.setdefault('key_points', [])
-                analysis.setdefault('participant_analysis', [])
-                analysis.setdefault('follow_up_required', [])
-                analysis.setdefault('language_analysis', {
-                    'languages_used': [],
-                    'language_distribution': ''
-                })
-                
-                return analysis
-                
-            except json.JSONDecodeError as e:
-                self.logger.error(f"Error parsing JSON response: {str(e)}")
-                return {
-                    "error": "Failed to parse response",
-                    "details": str(e),
-                    "raw_response": str(response)
-                }
+            # Parse and structure the response
+            if response.choices[0].message.function_call:
+                analysis = json.loads(response.choices[0].message.function_call.arguments)
+                return self._enhance_analysis_with_metadata(analysis, location_data, session_info)
+            
+            return {
+                "error": "Error al generar análisis",
+                "detalles": "No se pudo generar la respuesta"
+            }
             
         except Exception as e:
-            self.logger.error(f"Error in transcript analysis: {str(e)}")
+            self.logger.error(f"Error en análisis de transcripción: {str(e)}")
             raise
-    
-    def _create_analysis_prompt(self, transcript: str, session_info: Dict) -> str:
-        """Create structured prompt for GPT analysis"""
-        return f"""Analyze this meeting transcript and provide a structured report.
 
-Context:
-- Session ID: {session_info.get('session_id')}
-- Location: {session_info.get('location')}
-- Date: {session_info.get('start_time')}
-- Duration: {session_info.get('total_duration')}
-- Notes: {session_info.get('notes', 'None provided')}
+    def _create_analysis_prompt(
+        self,
+        transcript: str,
+        session_info: Dict,
+        location_data: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """Create detailed prompt with location context in Spanish"""
+        location_context = ""
+        if location_data:
+            main_site = location_data.get('main_site')
+            location_changes = location_data.get('location_changes', [])
+            
+            # Format location changes for context
+            location_sequence = []
+            for change in location_changes:
+                if isinstance(change, LocationChange):
+                    location_str = f"- {change.timestamp.strftime('%H:%M:%S')}: {change.area}"
+                    if change.sublocation:
+                        location_str += f" ({change.sublocation})"
+                    location_sequence.append(location_str)
+            
+            if isinstance(main_site, Location):
+                location_context = f"\n- Empresa: {main_site.company}\n- Ubicación: {main_site.site}"
+            
+            if location_sequence:
+                location_context += "\n\nRecorrido por la Obra:\n" + "\n".join(location_sequence)
+        
+        return f"""Analiza esta transcripción de visita de obra con el siguiente contexto:
 
-Analyze the transcript, focusing on:
-1. Overall summary
-2. Key discussion points and decisions
-3. Action items and follow-ups
-4. Language usage (Spanish/English/Catalan)
-5. Speaker contributions
+Información del Sitio:
+- ID Sesión: {session_info.get('session_id')}
+- Fecha: {session_info.get('start_time')}
+- Duración: {session_info.get('total_duration')}{location_context}
 
-Provide output in the specified JSON format, including:
-- executive_summary
-- key_points (with topic, details, decisions, action_items)
-- participant_analysis
-- follow_up_required
-- language_analysis
+Áreas de Enfoque:
+1. Observaciones específicas para cada área visitada
+2. Problemas técnicos identificados en ubicaciones específicas
+3. Preocupaciones de seguridad y sus ubicaciones exactas
+4. Tareas pendientes vinculadas a áreas específicas
+5. Observaciones generales de progreso y calidad
 
-Transcript:
+Transcripción:
 {transcript}"""
+
+    def _enhance_analysis_with_metadata(
+        self,
+        analysis: Dict[str, Any],
+        location_data: Optional[Dict[str, Any]],
+        session_info: Dict
+    ) -> Dict[str, Any]:
+        """Enhance analysis with metadata and statistics"""
+        # Add metadata in Spanish
+        metadata = {
+            'id_sesion': session_info.get('session_id'),
+            'fecha': session_info.get('start_time'),
+            'duracion': session_info.get('total_duration'),
+            'fecha_analisis': datetime.now().isoformat()
+        }
+        
+        # Add location data if available
+        if location_data:
+            main_site = location_data.get('main_site')
+            if isinstance(main_site, Location):
+                metadata['obra_principal'] = {
+                    'empresa': main_site.company,
+                    'ubicacion': main_site.site
+                }
+            metadata['areas_visitadas'] = len(location_data.get('location_changes', []))
+        
+        analysis['metadata'] = metadata
+        return analysis
+
+ 

@@ -3,25 +3,24 @@ from typing import Dict, List, Any
 from datetime import datetime
 import json
 from ..models.session import AudioSession
-from ..speakers.speaker_tracker import TrackedSpeaker, SpeakerSegment
 from ..utils.time_utils import format_duration
 
 class TranscriptFormatter:
-    """Formats transcripts and speaker information into various output formats."""
+    """Formats transcripts with speaker information. Location analysis is handled separately."""
     
-    @staticmethod
     def format_session_transcript(
+        self,
         session: AudioSession,
         transcripts: List[Dict[str, Any]],
         speaker_stats: List[Dict],
         output_dir: Path
     ):
-        """Format and save session transcript with enhanced speaker information."""
+        """Format and save session transcript with speaker information."""
         # Create session output directory
         session_dir = output_dir / session.session_id
         session_dir.mkdir(parents=True, exist_ok=True)
         
-        # Save main transcript
+        # Save transcript
         transcript_path = session_dir / "session_transcript.txt"
         
         with open(transcript_path, "w", encoding="utf-8") as f:
@@ -29,7 +28,6 @@ class TranscriptFormatter:
             f.write(f"Session ID: {session.session_id}\n")
             f.write(f"Location: {session.location or 'Not specified'}\n")
             f.write(f"Start Time: {session.start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"Total Files: {len(session.files)}\n")
             f.write(f"Total Duration: {format_duration(session.total_duration)}\n")
             
             if session.notes:
@@ -62,13 +60,20 @@ class TranscriptFormatter:
                 
                 f.write(f"{segment['speaker']}: {segment['text']}\n")
         
-        # Save detailed speaker data in JSON format
-        speaker_data_path = session_dir / "speaker_data.json"
-        with open(speaker_data_path, "w", encoding="utf-8") as f:
+        # Save speaker data in JSON format (useful for later analysis)
+        metadata_path = session_dir / "session_metadata.json"
+        with open(metadata_path, "w", encoding="utf-8") as f:
             json.dump(
                 {
                     "session_id": session.session_id,
-                    "speakers": speaker_stats
+                    "session_info": {
+                        "location": session.location,
+                        "start_time": session.start_time.isoformat(),
+                        "total_duration": session.total_duration,
+                        "notes": session.notes
+                    },
+                    "speakers": speaker_stats,
+                    "raw_transcript": self._extract_full_transcript(transcripts)
                 },
                 f,
                 indent=2,
@@ -76,3 +81,11 @@ class TranscriptFormatter:
             )
         
         return transcript_path
+
+    def _extract_full_transcript(self, transcripts: List[Dict[str, Any]]) -> str:
+        """Extracts full transcript text for later processing if needed."""
+        return "\n".join(
+            f"[{segment['absolute_time'].strftime('%H:%M:%S')}] "
+            f"{segment['speaker']}: {segment['text']}"
+            for segment in transcripts
+        )

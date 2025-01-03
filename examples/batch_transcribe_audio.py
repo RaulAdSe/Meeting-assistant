@@ -37,9 +37,7 @@ def main():
     try:
         # Create a session
         session = batch_transcriber.create_session(
-            audio_paths=audio_files,
-            location="Construction Site A - Building 3",
-            notes="Morning inspection with contractor"
+            audio_paths=audio_files
         )
         
         # Display temporal order

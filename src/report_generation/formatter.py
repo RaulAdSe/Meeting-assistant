@@ -1,124 +1,125 @@
-# src/report_generation/formatter.py
+# src/report_generation/report_formatter.py
 
 from pathlib import Path
 from typing import Dict, Any
-from datetime import datetime
 import json
-import logging
-
-def format_duration(seconds: float) -> str:
-    """Format duration in seconds to HH:MM:SS format"""
-    if isinstance(seconds, str):
-        return seconds  # Already formatted
-        
-    from datetime import timedelta
-    duration = timedelta(seconds=int(seconds))
-    hours = duration.seconds // 3600
-    minutes = (duration.seconds % 3600) // 60
-    remaining_seconds = duration.seconds % 60
-    
-    if hours > 0:
-        return f"{hours:02d}:{minutes:02d}:{remaining_seconds:02d}"
-    else:
-        return f"{minutes:02d}:{remaining_seconds:02d}"
+from datetime import datetime
+from ..location.models.location import Location, LocationChange
 
 class ReportFormatter:
-    """Formats AI analysis into readable reports"""
+    """Formatea informes de visitas de obra combinando ubicación y análisis de contenido"""
     
-    @staticmethod
-    def format_session_report(
-        session_info: Dict[str, Any],
+    def format_site_report(
+        self,
         analysis: Dict[str, Any],
-        output_dir: Path
+        location_data: Dict[str, Any],
+        output_dir: Path,
+        session_id: str
     ) -> Path:
-        """Format and save AI analysis as a readable report"""
+        """
+        Crea un informe formateado combinando seguimiento de ubicación y análisis de contenido.
+        Devuelve la ruta al informe generado.
+        """
+        # Create report directory
+        report_dir = output_dir / session_id
+        report_dir.mkdir(parents=True, exist_ok=True)
         
-        # Create session output directory
-        session_dir = output_dir / session_info['session_id']
-        session_dir.mkdir(parents=True, exist_ok=True)
+        report_path = report_dir / "informe_visita_obra.md"
         
-        # Create report paths
-        report_path = session_dir / "meeting_report.txt"
-        analysis_path = session_dir / "meeting_analysis.json"
-        
-        # Save raw analysis
-        with open(analysis_path, "w", encoding="utf-8") as f:
-            json.dump(analysis, f, indent=2, ensure_ascii=False)
-        
-        # Create formatted report
         with open(report_path, "w", encoding="utf-8") as f:
-            # Write header
-            f.write("Meeting Analysis Report\n")
-            f.write("=" * 50 + "\n\n")
+            # Write report header
+            f.write(self._format_header(analysis, location_data))
             
-            # Session Information
-            f.write("Session Information:\n")
-            f.write("-" * 20 + "\n")
-            f.write(f"Session ID: {session_info['session_id']}\n")
-            f.write(f"Location: {session_info['location']}\n")
-            f.write(f"Date: {session_info['start_time']}\n")
-            f.write(f"Duration: {format_duration(float(session_info['total_duration']))}\n")
-            if session_info.get('notes'):
-                f.write(f"Notes: {session_info['notes']}\n")
-            f.write("\n")
+            # Write executive summary
+            f.write("\n## Resumen Ejecutivo\n\n")
+            f.write(analysis.get('resumen_ejecutivo', 'No hay resumen disponible.'))
             
-            # Executive Summary
-            f.write("Executive Summary:\n")
-            f.write("-" * 20 + "\n")
-            f.write(f"{analysis['executive_summary']}\n\n")
+            # Write site overview
+            f.write("\n## Visión General de la Obra\n\n")
+            vision_general = analysis.get('vision_general', {})
             
-            # Key Points
-            f.write("Key Discussion Points:\n")
-            f.write("-" * 20 + "\n")
-            for point in analysis['key_points']:
-                f.write(f"\nTopic: {point['topic']}\n")
-                f.write(f"Details: {point['details']}\n")
-                if point['decisions']:
-                    f.write("Decisions:\n")
-                    for decision in point['decisions']:
-                        f.write(f"- {decision}\n")
-                if point['action_items']:
-                    f.write("Action Items:\n")
-                    for item in point['action_items']:
-                        f.write(f"- {item}\n")
-            f.write("\n")
+            # Format areas visited
+            f.write("\n### Áreas Visitadas\n\n")
+            for area in vision_general.get('areas_visitadas', []):
+                f.write(f"\n#### {area['area']}\n\n")
+                f.write("**Observaciones Clave:**\n")
+                for obs in area.get('observaciones_clave', []):
+                    f.write(f"- {obs}\n")
+                
+                if area.get('problemas_identificados'):
+                    f.write("\n**Problemas Identificados:**\n")
+                    for issue in area['problemas_identificados']:
+                        f.write(f"- {issue}\n")
             
-            # Site Specific Details
-            f.write("Site Specific Details:\n")
-            f.write("-" * 20 + "\n")
-            details = analysis['site_specific_details']
-            if details['safety_concerns']:
-                f.write("\nSafety Concerns:\n")
-                for concern in details['safety_concerns']:
-                    f.write(f"- {concern}\n")
-            if details['progress_updates']:
-                f.write("\nProgress Updates:\n")
-                for update in details['progress_updates']:
-                    f.write(f"- {update}\n")
-            if details['technical_issues']:
-                f.write("\nTechnical Issues:\n")
-                for issue in details['technical_issues']:
-                    f.write(f"- {issue}\n")
-            f.write("\n")
+            # Write technical findings
+            if analysis.get('hallazgos_tecnicos'):
+                f.write("\n## Hallazgos Técnicos\n\n")
+                for finding in analysis['hallazgos_tecnicos']:
+                    f.write(f"### {finding['ubicacion']}\n\n")
+                    f.write(f"**Hallazgo:** {finding['hallazgo']}\n")
+                    f.write(f"**Severidad:** {finding['severidad']}\n")
+                    f.write(f"**Acción Recomendada:** {finding['accion_recomendada']}\n\n")
             
-            # Follow-up Items
-            f.write("Follow-up Required:\n")
-            f.write("-" * 20 + "\n")
-            for item in analysis['follow_up_required']:
-                f.write(f"\nItem: {item['item']}\n")
-                f.write(f"Assigned to: {item['assigned_to']}\n")
-                f.write(f"Priority: {item['priority']}\n")
-            f.write("\n")
+            # Write safety concerns
+            if analysis.get('preocupaciones_seguridad'):
+                f.write("\n## Preocupaciones de Seguridad\n\n")
+                for concern in analysis['preocupaciones_seguridad']:
+                    f.write(f"### {concern['ubicacion']}\n\n")
+                    f.write(f"**Preocupación:** {concern['preocupacion']}\n")
+                    f.write(f"**Prioridad:** {concern['prioridad']}\n")
+                    f.write(f"**Mitigación:** {concern['mitigacion']}\n\n")
             
-            # Meeting Metrics
-            f.write("Meeting Metrics:\n")
-            f.write("-" * 20 + "\n")
-            metrics = analysis['meeting_metrics']
-            f.write(f"\nLanguage Distribution: {metrics['language_distribution']}\n")
-            f.write(f"Interaction Quality: {metrics['interaction_quality']}\n")
-            if metrics['unresolved_items']:
-                f.write("\nUnresolved Items:\n")
-                for item in metrics['unresolved_items']:
-                    f.write(f"- {item}\n")
+            # Write action items
+            f.write("\n## Tareas Pendientes\n\n")
+            for item in analysis.get('tareas_pendientes', []):
+                f.write(f"### {item['tarea']}\n\n")
+                f.write(f"- **Ubicación:** {item['ubicacion']}\n")
+                f.write(f"- **Asignado a:** {item['asignado_a']}\n")
+                f.write(f"- **Prioridad:** {item['prioridad']}\n")
+                f.write(f"- **Plazo:** {item['plazo']}\n\n")
             
+            # Write general observations
+            if analysis.get('observaciones_generales'):
+                f.write("\n## Observaciones Generales\n\n")
+                for observation in analysis['observaciones_generales']:
+                    f.write(f"- {observation}\n")
+        
+        # Also save raw data for future reference
+        data_path = report_dir / "datos_informe.json"
+        with open(data_path, "w", encoding="utf-8") as f:
+            json.dump({
+                'analisis': analysis,
+                'datos_ubicacion': {
+                    'obra_principal': {
+                        'empresa': location_data['main_site'].company,
+                        'ubicacion': location_data['main_site'].site
+                    } if isinstance(location_data.get('main_site'), Location) else {},
+                    'cambios_ubicacion': [
+                        {
+                            'hora': change.timestamp.isoformat(),
+                            'area': change.area,
+                            'sububicacion': change.sublocation
+                        }
+                        for change in location_data.get('location_changes', [])
+                        if isinstance(change, LocationChange)
+                    ]
+                }
+            }, f, indent=2, default=str)
+        
         return report_path
+    
+    def _format_header(self, analysis: Dict[str, Any], location_data: Dict[str, Any]) -> str:
+        """Formats the report header with site and session information"""
+        main_site = location_data.get('main_site')
+        metadata = analysis.get('metadata', {})
+        
+        header = f"""# Informe de Visita de Obra
+
+**Obra:** {main_site.company} - {main_site.site if isinstance(main_site, Location) else 'Desconocida'}
+**Fecha:** {metadata.get('fecha', 'Desconocida')}
+**Duración:** {metadata.get('duracion', 'Desconocida')}
+**Áreas Visitadas:** {metadata.get('areas_visitadas', 0)}
+
+---
+"""
+        return header
