@@ -37,15 +37,15 @@ class LLMService:
     def analyze_transcript(
         self,
         transcript_text: str,
-        location_data: Dict[str, Any],
-        session_info: Dict
-    ) -> Dict[str, Any]:
+        session_info: Dict, 
+        location_data: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
         """Generate analysis in Spanish incorporating location context"""
         try:
             # Create analysis prompt with location context
             prompt = self._create_analysis_prompt(
                 transcript_text,
-                location_data,
+                location_data or {},  
                 session_info
             )
             
@@ -147,38 +147,26 @@ class LLMService:
                     analysis = json.loads(raw_response)
                     self.logger.info(f"Parsed analysis: {analysis}")
                     
-                    # Create a new dictionary with proper types
+                    # Create a new dictionary with default values
                     processed_analysis = {
-                        'executive_summary': str(analysis.get('resumen_ejecutivo', 'No executive summary available.')),
+                        'executive_summary': "No executive summary available.",
                         'key_points': [],
                         'follow_up_required': []
                     }
                     
-                    # Map Spanish fields to English
+                    # Map Spanish keys to English
+                    if 'resumen_ejecutivo' in analysis:
+                        processed_analysis['executive_summary'] = analysis['resumen_ejecutivo']
+                        self.logger.info(f"Found resumen_ejecutivo: {analysis['resumen_ejecutivo']}")
+                    
                     if 'vision_general' in analysis:
-                        key_points = []
-                        for area in analysis['vision_general'].get('areas_visitadas', []):
-                            if area.get('observaciones_clave'):
-                                key_points.append({
-                                    'topic': area['area'],
-                                    'details': ' '.join(area['observaciones_clave'])
-                                })
-                        processed_analysis['key_points'] = key_points
+                        processed_analysis['overview'] = analysis['vision_general']
                     
                     if 'tareas_pendientes' in analysis:
-                        processed_analysis['follow_up_required'] = [
-                            {
-                                'item': task['tarea'],
-                                'priority': task['prioridad'],
-                                'assigned_to': task['asignado_a']
-                            }
-                            for task in analysis['tareas_pendientes']
-                        ]
+                        processed_analysis['follow_up_required'] = analysis['tareas_pendientes']
                     
-                    # Add additional fields
-                    processed_analysis['technical_findings'] = analysis.get('hallazgos_tecnicos', [])
-                    processed_analysis['security_concerns'] = analysis.get('preocupaciones_seguridad', [])
-                    processed_analysis['general_observations'] = analysis.get('observaciones_generales', [])
+                    if 'hallazgos_tecnicos' in analysis:
+                        processed_analysis['technical_findings'] = analysis['hallazgos_tecnicos']
                     
                     # Add metadata
                     processed_analysis = self._enhance_analysis_with_metadata(
@@ -193,7 +181,8 @@ class LLMService:
                 except json.JSONDecodeError as e:
                     self.logger.error(f"Failed to parse API response: {e}")
                     raise
-            
+                    
+            self.logger.warning("No function call in API response")
             return {
                 "error": "Error al generar análisis",
                 "detalles": "No se pudo generar la respuesta",

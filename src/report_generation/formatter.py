@@ -110,16 +110,16 @@ class ReportFormatter:
     
     def _format_header(self, analysis: Dict[str, Any], location_data: Dict[str, Any]) -> str:
         """Formats the report header with site and session information"""
-        main_site = location_data.get('main_site')
+        obra_principal = location_data.get('obra_principal', {})
         metadata = analysis.get('metadata', {})
         
         header = f"""# Informe de Visita de Obra
 
-**Obra:** {main_site.company} - {main_site.site if isinstance(main_site, Location) else 'Desconocida'}
-**Fecha:** {metadata.get('fecha', 'Desconocida')}
-**Duración:** {metadata.get('duracion', 'Desconocida')}
-**Áreas Visitadas:** {metadata.get('areas_visitadas', 0)}
+    **Obra:** {obra_principal.get('empresa', 'Desconocida')} - {obra_principal.get('ubicacion', 'Desconocida')}
+    **Fecha:** {metadata.get('fecha', 'Desconocida')}
+    **Duración:** {metadata.get('duracion', 'Desconocida')}
+    **Áreas Visitadas:** {metadata.get('areas_visitadas', 0)}
 
----
-"""
+    ---
+    """
         return header

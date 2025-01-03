@@ -74,14 +74,14 @@ class TranscriptAnalyzer:
             except Exception as loc_error:
                 self.logger.warning(f"Location processing failed: {str(loc_error)}. Continuing without location data.")
                 location_data = None
-            
+                
             # Create session directory
             session_dir = self.create_session_directory(session_info['session_id'])
             
             # Copy original transcript
             shutil.copy2(transcript_path, session_dir / "original_transcript.txt")
             
-            # Generate AI analysis with validation
+            # Generate AI analysis
             analysis = self.llm_service.analyze_transcript(
                 transcript_text=transcript_text,
                 session_info=session_info,
@@ -91,50 +91,48 @@ class TranscriptAnalyzer:
             # Validate analysis structure
             if not isinstance(analysis, dict):
                 raise ValueError("Analysis result is not a dictionary")
-                
-            # Ensure required keys exist
-            required_keys = ['executive_summary', 'key_points', 'follow_up_required']
-            for key in required_keys:
-                if key not in analysis:
-                    analysis[key] = []  # or appropriate default value
-                    self.logger.warning(f"Missing required key in analysis: {key}")
-            
-            self.logger.info(f"Final analysis dictionary: {analysis}")
             
             # Save analysis as JSON
             analysis_path = session_dir / "analysis.json"
             with open(analysis_path, 'w', encoding='utf-8') as f:
-                json.dump(analysis, f, indent=2, ensure_ascii=False, cls=JSONEncoder)
-
-            # Generate reports in different formats
-            # 1. Legacy text report
-            text_report_path = self.generate_text_report(
-                session_info=session_info,
-                analysis=analysis,
-                output_dir=session_dir
-            )
+                json.dump(analysis, f, indent=2, ensure_ascii=False, cls=JSONEncoder)            
             
-            # 2. Generate markdown and PDF reports
-            markdown_path, pdf_path = self.markdown_generator.generate_report(
-                session_info=session_info,
-                analysis=analysis,
-                output_dir=session_dir
-            )
-            
-            # Print locations of generated files
-            print("\nGenerated Files:")
-            print(f"- Original Transcript: {session_dir / 'original_transcript.txt'}")
-            print(f"- Analysis JSON: {analysis_path}")
-            print(f"- Text Report: {text_report_path}")
-            print(f"- Markdown Report: {markdown_path}")
-            print(f"- PDF Report: {pdf_path}")
+            try:
+                # Generate markdown and PDF reports
+                markdown_path, pdf_path = self.markdown_generator.generate_report(
+                    session_info=session_info,
+                    analysis=analysis,
+                    output_dir=session_dir
+                )
+                
+                # Generate text report (if you still want this)
+                text_report_path = self.generate_text_report(
+                    session_info=session_info,
+                    analysis=analysis,
+                    output_dir=session_dir
+                )
+                
+                # Print locations of generated files
+                print("\nGenerated Files:")
+                print(f"- Original Transcript: {session_dir / 'original_transcript.txt'}")
+                print(f"- Analysis JSON: {analysis_path}")
+                if markdown_path and markdown_path.exists():
+                    print(f"- Markdown Report: {markdown_path}")
+                if pdf_path and pdf_path.exists():
+                    print(f"- PDF Report: {pdf_path}")
+                if text_report_path and text_report_path.exists():
+                    print(f"- Text Report: {text_report_path}")
+                
+            except Exception as report_error:
+                self.logger.error(f"Error generating reports: {str(report_error)}")
+                print(f"Warning: Some report formats could not be generated: {str(report_error)}")
             
             # Print summary
             self.print_analysis_summary(analysis)
             
         except Exception as e:
             self.logger.error(f"Error analyzing transcript: {str(e)}")
-            raise
+            raise          
         
     def parse_session_info(self, transcript_text: str) -> Dict[str, Any]:
         """Parse session information from transcript text"""
