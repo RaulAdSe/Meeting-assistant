@@ -40,7 +40,8 @@ class EnhancedTranscriber:
         self.transcriber = pipeline(
             "automatic-speech-recognition", 
             model=model_name,
-            device=self.device
+            device=self.device,
+            model_kwargs={"forced_decoder_ids": self._get_language_codes()}
         )
         
         # Initialize diarization pipeline
@@ -57,6 +58,15 @@ class EnhancedTranscriber:
             self.diarization_pipeline = None
 
         self.speaker_manager = SpeakerManager()  # Initialize SpeakerManager
+
+    def _get_language_codes(self):
+        """Get forced decoder IDs for Spanish and Catalan"""
+        # Map to force Spanish/Catalan detection
+        language_codes = {
+            "es": 2979,  # Spanish
+            "ca": 2422   # Catalan
+        }
+        return {"language": "es", "task": "transcribe"}
 
     def align_transcript_with_speakers(self, transcript_chunks: List[Dict], speaker_segments: List[Dict]) -> List[Tuple[str, str]]:
         """Align transcript chunks with speaker segments"""

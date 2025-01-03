@@ -139,12 +139,65 @@ class LLMService:
             
             # Parse and structure the response
             if response.choices[0].message.function_call:
-                analysis = json.loads(response.choices[0].message.function_call.arguments)
-                return self._enhance_analysis_with_metadata(analysis, location_data, session_info)
+                try:
+                    # Parse the response and log it
+                    raw_response = response.choices[0].message.function_call.arguments
+                    self.logger.info(f"Raw API response: {raw_response}")
+                    
+                    analysis = json.loads(raw_response)
+                    self.logger.info(f"Parsed analysis: {analysis}")
+                    
+                    # Create a new dictionary with proper types
+                    processed_analysis = {
+                        'executive_summary': str(analysis.get('resumen_ejecutivo', 'No executive summary available.')),
+                        'key_points': [],
+                        'follow_up_required': []
+                    }
+                    
+                    # Map Spanish fields to English
+                    if 'vision_general' in analysis:
+                        key_points = []
+                        for area in analysis['vision_general'].get('areas_visitadas', []):
+                            if area.get('observaciones_clave'):
+                                key_points.append({
+                                    'topic': area['area'],
+                                    'details': ' '.join(area['observaciones_clave'])
+                                })
+                        processed_analysis['key_points'] = key_points
+                    
+                    if 'tareas_pendientes' in analysis:
+                        processed_analysis['follow_up_required'] = [
+                            {
+                                'item': task['tarea'],
+                                'priority': task['prioridad'],
+                                'assigned_to': task['asignado_a']
+                            }
+                            for task in analysis['tareas_pendientes']
+                        ]
+                    
+                    # Add additional fields
+                    processed_analysis['technical_findings'] = analysis.get('hallazgos_tecnicos', [])
+                    processed_analysis['security_concerns'] = analysis.get('preocupaciones_seguridad', [])
+                    processed_analysis['general_observations'] = analysis.get('observaciones_generales', [])
+                    
+                    # Add metadata
+                    processed_analysis = self._enhance_analysis_with_metadata(
+                        processed_analysis, 
+                        location_data, 
+                        session_info
+                    )
+                    
+                    self.logger.info(f"Final processed analysis: {processed_analysis}")
+                    return processed_analysis
+                    
+                except json.JSONDecodeError as e:
+                    self.logger.error(f"Failed to parse API response: {e}")
+                    raise
             
             return {
                 "error": "Error al generar análisis",
-                "detalles": "No se pudo generar la respuesta"
+                "detalles": "No se pudo generar la respuesta",
+                "executive_summary": "Failed to generate analysis"
             }
             
         except Exception as e:
@@ -223,4 +276,3 @@ Transcripción:
         analysis['metadata'] = metadata
         return analysis
 
- 

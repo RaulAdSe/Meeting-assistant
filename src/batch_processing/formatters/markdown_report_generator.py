@@ -68,6 +68,7 @@ class MarkdownReportGenerator:
             content.append(f"- **Notes**: {session_info['notes']}\n")
         
         # Executive Summary
+        self.logger.info(f"Executive summary in analysis: {analysis.get('executive_summary')}")
         content.extend([
             "## Executive Summary",
             analysis.get('executive_summary', 'No summary provided.'),

@@ -81,12 +81,25 @@ class TranscriptAnalyzer:
             # Copy original transcript
             shutil.copy2(transcript_path, session_dir / "original_transcript.txt")
             
-            # Generate AI analysis
+            # Generate AI analysis with validation
             analysis = self.llm_service.analyze_transcript(
                 transcript_text=transcript_text,
                 session_info=session_info,
                 location_data=location_data
             )
+            
+            # Validate analysis structure
+            if not isinstance(analysis, dict):
+                raise ValueError("Analysis result is not a dictionary")
+                
+            # Ensure required keys exist
+            required_keys = ['executive_summary', 'key_points', 'follow_up_required']
+            for key in required_keys:
+                if key not in analysis:
+                    analysis[key] = []  # or appropriate default value
+                    self.logger.warning(f"Missing required key in analysis: {key}")
+            
+            self.logger.info(f"Final analysis dictionary: {analysis}")
             
             # Save analysis as JSON
             analysis_path = session_dir / "analysis.json"
@@ -101,11 +114,20 @@ class TranscriptAnalyzer:
                 output_dir=session_dir
             )
             
+            # 2. Generate markdown and PDF reports
+            markdown_path, pdf_path = self.markdown_generator.generate_report(
+                session_info=session_info,
+                analysis=analysis,
+                output_dir=session_dir
+            )
+            
             # Print locations of generated files
             print("\nGenerated Files:")
             print(f"- Original Transcript: {session_dir / 'original_transcript.txt'}")
             print(f"- Analysis JSON: {analysis_path}")
             print(f"- Text Report: {text_report_path}")
+            print(f"- Markdown Report: {markdown_path}")
+            print(f"- PDF Report: {pdf_path}")
             
             # Print summary
             self.print_analysis_summary(analysis)
@@ -165,44 +187,43 @@ class TranscriptAnalyzer:
             # Executive Summary
             f.write("Executive Summary\n")
             f.write("-" * 20 + "\n")
-            f.write(analysis.get('executive_summary', 'No executive summary available.'))
-            f.write("\n\n")
+            summary = str(analysis.get('executive_summary', 'No executive summary available.'))
+            f.write(f"{summary}\n\n")
             
             # Key Points
             if analysis.get('key_points'):
                 f.write("Key Points\n")
                 f.write("-" * 20 + "\n")
                 for point in analysis['key_points']:
-                    f.write(f"\nTopic: {point['topic']}\n")
-                    f.write(f"Details: {point['details']}\n")
-                    if point.get('decisions'):
-                        f.write("Decisions:\n")
-                        for decision in point['decisions']:
-                            f.write(f"- {decision}\n")
-                    if point.get('action_items'):
-                        f.write("Action Items:\n")
-                        for item in point['action_items']:
-                            f.write(f"- {item}\n")
+                    f.write(f"\nArea: {point.get('topic', 'Unknown area')}\n")
+                    f.write(f"Details: {point.get('details', 'No details available.')}\n")
                 f.write("\n")
             
-            # Language Analysis
-            if 'language_analysis' in analysis:
-                f.write("Language Analysis\n")
+            # Technical Findings
+            if analysis.get('technical_findings'):
+                f.write("Technical Findings\n")
                 f.write("-" * 20 + "\n")
-                f.write(f"Languages Used: {', '.join(analysis['language_analysis'].get('languages_used', []))}\n")
-                f.write(f"Distribution: {analysis['language_analysis'].get('language_distribution', '')}\n\n")
+                for finding in analysis['technical_findings']:
+                    f.write(f"- Location: {finding.get('ubicacion')}\n")
+                    f.write(f"  Finding: {finding.get('hallazgo')}\n")
+                    f.write(f"  Severity: {finding.get('severidad')}\n")
+                    f.write(f"  Recommended Action: {finding.get('accion_recomendada')}\n\n")
             
             # Follow-up Items
             if analysis.get('follow_up_required'):
                 f.write("Follow-up Required\n")
                 f.write("-" * 20 + "\n")
                 for item in analysis['follow_up_required']:
-                    f.write(f"- {item['item']}\n")
-                    if 'priority' in item:
-                        f.write(f"  Priority: {item['priority']}\n")
-                    if 'assigned_to' in item:
-                        f.write(f"  Assigned to: {item['assigned_to']}\n")
-                    f.write("\n")
+                    f.write(f"- {item.get('item', 'Unknown task')}\n")
+                    f.write(f"  Priority: {item.get('priority', 'Not specified')}\n")
+                    f.write(f"  Assigned to: {item.get('assigned_to', 'Unassigned')}\n\n")
+            
+            # General Observations
+            if analysis.get('general_observations'):
+                f.write("General Observations\n")
+                f.write("-" * 20 + "\n")
+                for observation in analysis['general_observations']:
+                    f.write(f"- {observation}\n")
         
         return report_path
 
@@ -210,12 +231,33 @@ class TranscriptAnalyzer:
         """Print a summary of the analysis to console"""
         print("\nAnalysis Summary")
         print("=" * 50)
-        print("\nExecutive Summary:")
-        print(analysis['executive_summary'])
         
+        # Print executive summary with error handling
+        print("\nExecutive Summary:")
+        self.logger.info(f"Analysis keys: {analysis.keys()}")
+        self.logger.info(f"Full analysis: {analysis}")
+        
+        try:
+            summary = analysis.get('executive_summary', 'No executive summary available.')
+            self.logger.info(f"Retrieved executive summary: {summary}")
+            print(summary)
+        except Exception as e:
+            self.logger.error(f"Error accessing executive summary: {str(e)}", exc_info=True)
+            print("Could not retrieve executive summary")
+        
+        # Print action items with error handling
         print("\nKey Action Items:")
-        for item in analysis['follow_up_required']:
-            print(f"- {item['item']} (Priority: {item['priority']})")
+        try:
+            follow_ups = analysis.get('follow_up_required', [])
+            if follow_ups:
+                for item in follow_ups:
+                    print(f"- {item.get('tarea', 'Unknown task')} "
+                          f"(Priority: {item.get('prioridad', 'Not specified')})")
+            else:
+                print("No action items identified")
+        except Exception as e:
+            self.logger.error(f"Error accessing follow-up items: {str(e)}", exc_info=True)
+            print("Could not retrieve action items")
 
 def main():
     analyzer = TranscriptAnalyzer()
