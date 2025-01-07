@@ -4,20 +4,9 @@ from typing import Optional, Dict, Any, List
 import uuid
 from datetime import datetime
 import json
-from dataclasses import dataclass, field
 from .connection import DatabaseConnection
 import psycopg2.extras
-
-@dataclass
-class Location:
-    """Represents a construction site location"""
-    id: uuid.UUID
-    name: str
-    address: Optional[str] = None
-    coordinates: Optional[tuple] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=datetime.now)
-    updated_at: datetime = field(default_factory=datetime.now)
+from ..models.models import Location  # Import Location from models
 
 class LocationRepository:
     def __init__(self, connection=None):
@@ -38,7 +27,6 @@ class LocationRepository:
             conn.autocommit = True
         
         try:
-            # Use RealDictCursor to get dictionary results
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 if params:
                     params = tuple(
@@ -53,30 +41,32 @@ class LocationRepository:
             if close_conn:
                 conn.close()
 
+    def _to_uuid(self, value: Any) -> Optional[uuid.UUID]:
+        if value is None:
+            return None
+        if isinstance(value, uuid.UUID):
+            return value
+        return uuid.UUID(str(value))
+    
+
     def create(self, name: str, address: Optional[str] = None, 
-               coordinates: Optional[tuple] = None, metadata: Dict[str, Any] = None) -> Location:
+               metadata: Dict[str, Any] = None) -> Location:
         """Create a new location"""
         query = """
-        INSERT INTO locations (name, address, coordinates, metadata)
-        VALUES (%s, %s, %s, %s)
-        RETURNING id, name, address, coordinates, metadata, created_at, updated_at
+        INSERT INTO locations (name, address, metadata)
+        VALUES (%s, %s, %s)
+        RETURNING *
         """
-        
-        point = f"({coordinates[0]},{coordinates[1]})" if coordinates else None
-        result = self._execute_query(
-            query, 
-            (name, address, point, json.dumps(metadata or {}))
-        )
-        
-        if not result:
-            raise ValueError("Failed to create location")
-            
+        result = self._execute_query(query, (
+            name,
+            address,
+            json.dumps(metadata or {})
+        ))
         row = result[0]
         return Location(
-            id=uuid.UUID(str(row['id'])),
+            id=self._to_uuid(row['id']),
             name=row['name'],
             address=row['address'],
-            coordinates=tuple(float(x) for x in row['coordinates'][1:-1].split(',')) if row['coordinates'] else None,
             metadata=row['metadata'],
             created_at=row['created_at'],
             updated_at=row['updated_at']
@@ -92,10 +82,9 @@ class LocationRepository:
             
         row = result[0]
         return Location(
-            id=uuid.UUID(str(row['id'])),
+            id=self._to_uuid(row['id']),
             name=row['name'],
             address=row['address'],
-            coordinates=tuple(float(x) for x in row['coordinates'][1:-1].split(',')) if row['coordinates'] else None,
             metadata=row['metadata'],
             created_at=row['created_at'],
             updated_at=row['updated_at']
@@ -111,10 +100,9 @@ class LocationRepository:
             
         row = result[0]
         return Location(
-            id=uuid.UUID(str(row['id'])),
+            id=self._to_uuid(row['id']),
             name=row['name'],
             address=row['address'],
-            coordinates=tuple(float(x) for x in row['coordinates'][1:-1].split(',')) if row['coordinates'] else None,
             metadata=row['metadata'],
             created_at=row['created_at'],
             updated_at=row['updated_at']
@@ -127,10 +115,9 @@ class LocationRepository:
         
         return [
             Location(
-                id=uuid.UUID(str(row['id'])),
+                id=self._to_uuid(row['id']),
                 name=row['name'],
                 address=row['address'],
-                coordinates=tuple(float(x) for x in row['coordinates'][1:-1].split(',')) if row['coordinates'] else None,
                 metadata=row['metadata'],
                 created_at=row['created_at'],
                 updated_at=row['updated_at']
@@ -141,10 +128,8 @@ class LocationRepository:
     def update(self, location_id: uuid.UUID, 
                name: Optional[str] = None,
                address: Optional[str] = None,
-               coordinates: Optional[tuple] = None,
                metadata: Optional[Dict[str, Any]] = None) -> Location:
         """Update a location"""
-        # Build update query dynamically based on provided fields
         update_parts = []
         params = []
         
@@ -154,9 +139,6 @@ class LocationRepository:
         if address is not None:
             update_parts.append("address = %s")
             params.append(address)
-        if coordinates is not None:
-            update_parts.append("coordinates = %s")
-            params.append(f"({coordinates[0]},{coordinates[1]})")
         if metadata is not None:
             update_parts.append("metadata = %s")
             params.append(json.dumps(metadata))
@@ -170,7 +152,7 @@ class LocationRepository:
         UPDATE locations 
         SET {', '.join(update_parts)}
         WHERE id = %s
-        RETURNING id, name, address, coordinates, metadata, created_at, updated_at
+        RETURNING *
         """
         
         params.append(str(location_id))
@@ -181,10 +163,9 @@ class LocationRepository:
             
         row = result[0]
         return Location(
-            id=uuid.UUID(str(row['id'])),
+            id=self._to_uuid(row['id']),
             name=row['name'],
             address=row['address'],
-            coordinates=tuple(float(x) for x in row['coordinates'][1:-1].split(',')) if row['coordinates'] else None,
             metadata=row['metadata'],
             created_at=row['created_at'],
             updated_at=row['updated_at']

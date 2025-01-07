@@ -4,14 +4,15 @@ import uuid
 import logging
 from ..models.models import (
     Visit, Problem, Solution, ChronogramEntry,
-    ChecklistTemplate, VisitChecklist,
+    ChecklistTemplate, VisitChecklist, Location,
     Severity, ProblemStatus, ChronogramStatus, ChecklistStatus
 )
 from ..database.repositories import (
     VisitRepository, ProblemRepository, SolutionRepository,
     ChronogramRepository, ChecklistTemplateRepository,
-    VisitChecklistRepository, LocationRepository
+    VisitChecklistRepository
 )
+from ..database.location_repository import LocationRepository
 
 class VisitHistoryService:
     """Service to manage visit history and related data."""
@@ -25,17 +26,23 @@ class VisitHistoryService:
         self.checklist_template_repo = ChecklistTemplateRepository()
         self.visit_checklist_repo = VisitChecklistRepository()
         self.location_repo = LocationRepository()
+        
 
     def create_visit(self, location_id: uuid.UUID, date: datetime,
-                    metadata: Dict[str, Any] = None) -> Visit:
+                    metadata: Optional[Dict[str, Any]] = None) -> Visit:
         """Create a new visit record."""
         try:
+            # Verify location exists
+            location = self.location_repo.get(location_id)
+            if not location:
+                raise ValueError(f"Location {location_id} not found")
+
             visit = self.visit_repo.create(
                 date=date,
                 location_id=location_id,
                 metadata=metadata
             )
-            self.logger.info(f"Created new visit record: {visit.id}")
+            self.logger.info(f"Created visit: {visit.id}")
             return visit
         except Exception as e:
             self.logger.error(f"Error creating visit: {str(e)}")
@@ -153,67 +160,37 @@ class VisitHistoryService:
 
     def get_visit_history(self, location_id: uuid.UUID,
                          start_date: Optional[datetime] = None,
-                         end_date: Optional[datetime] = None) -> List[Dict[str, Any]]:
-        """Get comprehensive visit history with all related data."""
+                         end_date: Optional[datetime] = None) -> List[Visit]:
+        """Get visit history for a location."""
         try:
-            visits = self.visit_repo.get_by_location(location_id, start_date, end_date)
-            history = []
-            
-            for visit in visits:
-                visit_data = {
-                    'visit': visit,
-                    'problems': [],
-                    'chronogram': self.chronogram_repo.get_by_visit(visit.id)
-                }
-                
-                # Get problems and their solutions
-                problems = self.problem_repo.get_by_visit(visit.id)
-                for problem in problems:
-                    solutions = self.solution_repo.get_by_problem(problem.id)
-                    visit_data['problems'].append({
-                        'problem': problem,
-                        'solutions': solutions
-                    })
-                
-                history.append(visit_data)
-                
-            return history
+            # Verify location exists
+            location = self.location_repo.get(location_id)
+            if not location:
+                raise ValueError(f"Location {location_id} not found")
+
+            visits = self.visit_repo.get_by_location(
+                location_id=location_id,
+                start_date=start_date,
+                end_date=end_date
+            )
+            return visits
         except Exception as e:
-            self.logger.error(f"Error retrieving visit history: {str(e)}")
+            self.logger.error(f"Error getting visit history: {str(e)}")
             raise
 
     def get_problem_trends(self, location_id: uuid.UUID,
-                         area: Optional[str] = None,
-                         start_date: Optional[datetime] = None,
-                         end_date: Optional[datetime] = None) -> Dict[str, Any]:
-        """Get problem trends and statistics for a location."""
+                          area: Optional[str] = None) -> Dict[str, Any]:
+        """Get problem history trends for a location."""
         try:
-            visits = self.visit_repo.get_by_location(location_id, start_date, end_date)
-            all_problems = []
-            
-            for visit in visits:
-                problems = self.problem_repo.get_by_visit(visit.id)
-                if area:
-                    problems = [p for p in problems if p.area == area]
-                all_problems.extend(problems)
-            
-            # Calculate statistics
-            total_problems = len(all_problems)
-            severity_counts = {
-                severity: len([p for p in all_problems if p.severity == severity])
-                for severity in Severity
-            }
-            status_counts = {
-                status: len([p for p in all_problems if p.status == status])
-                for status in ProblemStatus
-            }
-            
-            return {
-                'total_problems': total_problems,
-                'severity_distribution': severity_counts,
-                'status_distribution': status_counts,
-                'area_distribution': dict() if not area else {area: total_problems}
-            }
+            # Verify location exists
+            location = self.location_repo.get(location_id)
+            if not location:
+                raise ValueError(f"Location {location_id} not found")
+
+            return self.problem_repo.get_problem_trends(
+                location_id=location_id,
+                area=area
+            )
         except Exception as e:
-            self.logger.error(f"Error analyzing problem trends: {str(e)}")
+            self.logger.error(f"Error getting problem trends: {str(e)}")
             raise

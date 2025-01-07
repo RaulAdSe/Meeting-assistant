@@ -18,7 +18,6 @@ CREATE TABLE IF NOT EXISTS locations (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
     address TEXT,
-    coordinates POINT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     metadata JSONB DEFAULT '{}'::jsonb

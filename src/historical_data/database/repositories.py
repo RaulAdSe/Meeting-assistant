@@ -122,7 +122,7 @@ class ProblemRepository(BaseRepository):
         query = """
         INSERT INTO problems (visit_id, description, severity, area)
         VALUES (%s, %s, %s, %s)
-        RETURNING id, visit_id, description, severity, area, status, created_at, updated_at
+        RETURNING *
         """
         result = self._execute_query(query, (str(visit_id), description, severity.value, area))
         row = result[0]
@@ -155,7 +155,8 @@ class ProblemRepository(BaseRepository):
         ]
 
     def get_history_by_location(self, location_id: uuid.UUID, 
-                              area: Optional[str] = None) -> List[Dict[str, Any]]:
+                              area: Optional[str] = None) -> List[Problem]:
+        """Get problems history for a location, optionally filtered by area"""
         query = """
         SELECT p.* FROM problems p
         JOIN visits v ON p.visit_id = v.id
@@ -168,23 +169,41 @@ class ProblemRepository(BaseRepository):
             params.append(area)
             
         query += " ORDER BY v.date DESC, p.created_at DESC"
-        
+            
         results = self._execute_query(query, tuple(params))
         return [
-            {
-                'problem': Problem(
-                    id=self._to_uuid(row['id']),
-                    visit_id=self._to_uuid(row['visit_id']),
-                    description=row['description'],
-                    severity=Severity(row['severity']),
-                    area=row['area'],
-                    status=ProblemStatus(row['status']),
-                    created_at=row['created_at'],
-                    updated_at=row['updated_at']
-                )
-            }
-            for row in results
+            Problem(
+                id=self._to_uuid(row['id']),
+                visit_id=self._to_uuid(row['visit_id']),
+                description=row['description'],
+                severity=Severity(row['severity']),
+                area=row['area'],
+                status=ProblemStatus(row['status']),
+                created_at=row['created_at'],
+                updated_at=row['updated_at']
+            )
+            for row in (results or [])
         ]
+
+    def get_problem_trends(self, location_id: uuid.UUID, 
+                          area: Optional[str] = None) -> Dict[str, Any]:
+        """Get problem trends and statistics"""
+        problems = self.get_history_by_location(location_id, area)
+        
+        # Calculate trends
+        total_problems = len(problems)
+        severity_distribution = {}
+        status_distribution = {}
+
+        for problem in problems:
+            severity_distribution[problem.severity] = severity_distribution.get(problem.severity, 0) + 1
+            status_distribution[problem.status] = status_distribution.get(problem.status, 0) + 1
+
+        return {
+            'total_problems': total_problems,
+            'severity_distribution': severity_distribution,
+            'status_distribution': status_distribution
+        }
 
     def update_status(self, problem_id: uuid.UUID, status: ProblemStatus) -> Problem:
         query = """
@@ -416,7 +435,7 @@ class LocationRepository(BaseRepository):
         query = """
         INSERT INTO locations (name, address, coordinates, metadata)
         VALUES (%s, %s, %s, %s)
-        RETURNING id, name, address, coordinates, metadata, created_at, updated_at
+        RETURNING *
         """
         result = self._execute_query(query, (
             name,
@@ -426,11 +445,11 @@ class LocationRepository(BaseRepository):
         ))
         row = result[0]
         return {
-            'id': self._to_uuid(row[0]),
-            'name': row[1],
-            'address': row[2],
-            'coordinates': row[3],
-            'metadata': row[4],
-            'created_at': row[5],
-            'updated_at': row[6]
+            'id': self._to_uuid(row['id']),
+            'name': row['name'],
+            'address': row['address'],
+            'coordinates': row['coordinates'],
+            'metadata': row['metadata'],
+            'created_at': row['created_at'],
+            'updated_at': row['updated_at']
         }

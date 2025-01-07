@@ -96,3 +96,13 @@ class VisitChecklist:
     completed_at: Optional[datetime] = None
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
+
+@dataclass
+class Location:
+    """Represents a construction site location"""
+    id: uuid.UUID
+    name: str
+    address: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=datetime.now)
+    updated_at: datetime = field(default_factory=datetime.now)

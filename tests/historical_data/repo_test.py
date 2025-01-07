@@ -225,15 +225,44 @@ class TestProblemRepository:
         )
 
         # Test getting all problems
-        history = problem_repo.get_history_by_location(sample_location_id)
-        assert len(history) == 3
-
+        problems = problem_repo.get_history_by_location(sample_location_id)
+        assert len(problems) == 3
+        assert any(p.severity == Severity.HIGH for p in problems)
+        assert any(p.severity == Severity.MEDIUM for p in problems)
+        assert any(p.severity == Severity.LOW for p in problems)
+        
         # Test filtering by area
-        area1_history = problem_repo.get_history_by_location(
+        area1_problems = problem_repo.get_history_by_location(
             sample_location_id,
             area="Area 1"
         )
-        assert len(area1_history) == 2
+        assert len(area1_problems) == 2
+        assert all(p.area == "Area 1" for p in area1_problems)
+        assert any(p.severity == Severity.HIGH for p in area1_problems)
+        assert any(p.severity == Severity.MEDIUM for p in area1_problems)
+
+    def test_get_problem_trends(self, problem_repo, visit_repo, sample_location_id):
+        # Create visits and problems
+        visit = visit_repo.create(date=datetime.now(), location_id=sample_location_id)
+        
+        problem1 = problem_repo.create(
+            visit_id=visit.id,
+            description="Problem in Area 1",
+            severity=Severity.HIGH,
+            area="Area 1"
+        )
+        problem2 = problem_repo.create(
+            visit_id=visit.id,
+            description="Problem in Area 1",
+            severity=Severity.MEDIUM,
+            area="Area 1"
+        )
+
+        trends = problem_repo.get_problem_trends(sample_location_id, area="Area 1")
+        assert trends['total_problems'] == 2
+        assert trends['severity_distribution'][Severity.HIGH] == 1
+        assert trends['severity_distribution'][Severity.MEDIUM] == 1
+        assert trends['status_distribution'][ProblemStatus.IDENTIFIED] == 2
 
 class TestSolutionRepository:
     def test_create_solution(self, problem_repo, solution_repo, sample_visit):

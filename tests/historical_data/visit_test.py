@@ -13,16 +13,15 @@ def history_service():
 @pytest.fixture
 def sample_location(history_service):
     # Create a location first
-    location = history_service.location_repo.create(
+    return history_service.location_repo.create(
         name="Test Location",
         address="123 Test St",
         metadata={"type": "facility"}
     )
-    return location
 
 @pytest.fixture
 def sample_location_id(sample_location):
-    return sample_location.id
+    return sample_location['id'] if isinstance(sample_location, dict) else sample_location.id
 
 @pytest.fixture
 def sample_visit(history_service, sample_location_id):
@@ -181,17 +180,21 @@ class TestVisitHistoryService:
         )
         
         assert len(history) == 2
-        assert any(v['visit'].id == visit1.id for v in history)
-        assert any(v['visit'].id == visit2.id for v in history)
+        # Update these assertions to handle Visit objects directly
+        visit_ids = {visit.id for visit in history}
+        assert visit1.id in visit_ids
+        assert visit2.id in visit_ids
         
         # Verify problem details
-        for visit_data in history:
-            if visit_data['visit'].id == visit1.id:
-                assert len(visit_data['problems']) == 1
-                assert visit_data['problems'][0]['problem'].severity == Severity.HIGH
-            elif visit_data['visit'].id == visit2.id:
-                assert len(visit_data['problems']) == 1
-                assert visit_data['problems'][0]['problem'].severity == Severity.MEDIUM
+        for visit in history:
+            if visit.id == visit1.id:
+                problems = history_service.problem_repo.get_by_visit(visit.id)
+                assert len(problems) == 1
+                assert problems[0].severity == Severity.HIGH
+            elif visit.id == visit2.id:
+                problems = history_service.problem_repo.get_by_visit(visit.id)
+                assert len(problems) == 1
+                assert problems[0].severity == Severity.MEDIUM
 
     def test_get_problem_trends(self, history_service, sample_location_id):
         # Create visits and problems
