@@ -10,7 +10,7 @@ from ..models.models import (
 from ..database.repositories import (
     VisitRepository, ProblemRepository, SolutionRepository,
     ChronogramRepository, ChecklistTemplateRepository,
-    VisitChecklistRepository
+    VisitChecklistRepository, LocationRepository
 )
 
 class VisitHistoryService:
@@ -24,6 +24,7 @@ class VisitHistoryService:
         self.chronogram_repo = ChronogramRepository()
         self.checklist_template_repo = ChecklistTemplateRepository()
         self.visit_checklist_repo = VisitChecklistRepository()
+        self.location_repo = LocationRepository()
 
     def create_visit(self, location_id: uuid.UUID, date: datetime,
                     metadata: Dict[str, Any] = None) -> Visit:

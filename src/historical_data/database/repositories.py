@@ -2,6 +2,7 @@ from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime
 import json
+import psycopg2.extras
 from ..models.models import (  # Fixed import path
     Visit, Problem, Solution, ChronogramEntry,
     ChecklistTemplate, VisitChecklist,
@@ -9,23 +10,47 @@ from ..models.models import (  # Fixed import path
 )
 from src.speakers.database.connection import DatabaseConnection  # Full import path
 
-class BaseRepository:
-    def __init__(self):
-        self.db = DatabaseConnection.get_instance()
+psycopg2.extras.register_uuid()
 
-    def _execute_query(self, query: str, params: tuple = None) -> Optional[List[tuple]]:
+class BaseRepository:
+    def __init__(self, connection=None):
+        self.db = DatabaseConnection.get_instance()
+        self._connection = connection
+
+    def _get_connection(self):
+        """Get the connection to use for queries"""
+        if self._connection:
+            return self._connection
+        return self.db.get_connection()
+
+    def _execute_query(self, query: str, params: tuple = None) -> Optional[List[Dict]]:
         """Execute a query and return results"""
-        conn = self.db.get_connection()
+        conn = self._get_connection()
+        close_conn = False
+        if not self._connection:
+            close_conn = True
+            conn.autocommit = True
+        
         try:
-            with conn.cursor() as cur:
+            # Use RealDictCursor to get dictionary results
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                if params:
+                    params = tuple(str(p) if isinstance(p, uuid.UUID) else p for p in params)
                 cur.execute(query, params)
                 if cur.description:  # If the query returns data
                     return cur.fetchall()
-                conn.commit()
                 return None
         finally:
-            conn.close()
+            if close_conn:
+                conn.close()
 
+    def _to_uuid(self, value: Any) -> Optional[uuid.UUID]:
+        """Convert string to UUID if possible"""
+        if value is None:
+            return None
+        if isinstance(value, uuid.UUID):
+            return value
+        return uuid.UUID(str(value))
 
 class VisitRepository(BaseRepository):
     def create(self, date: datetime, location_id: uuid.UUID, metadata: Dict[str, Any] = None) -> Visit:
@@ -34,15 +59,18 @@ class VisitRepository(BaseRepository):
         VALUES (%s, %s, %s)
         RETURNING id, date, location_id, metadata, created_at, updated_at
         """
-        result = self._execute_query(query, (date, location_id, json.dumps(metadata or {})))
+        result = self._execute_query(query, (date, str(location_id), json.dumps(metadata or {})))
+        if not result:
+            raise ValueError("Failed to create visit")
+            
         row = result[0]
         return Visit(
-            id=row[0],
-            date=row[1],
-            location_id=row[2],
-            metadata=row[3],
-            created_at=row[4],
-            updated_at=row[5]
+            id=self._to_uuid(row['id']),
+            date=row['date'],
+            location_id=self._to_uuid(row['location_id']),
+            metadata=row['metadata'],
+            created_at=row['created_at'],
+            updated_at=row['updated_at']
         )
 
     def get(self, visit_id: uuid.UUID) -> Optional[Visit]:
@@ -50,14 +78,15 @@ class VisitRepository(BaseRepository):
         result = self._execute_query(query, (str(visit_id),))
         if not result:
             return None
+            
         row = result[0]
         return Visit(
-            id=row[0],
-            date=row[1],
-            location_id=row[2],
-            metadata=row[3],
-            created_at=row[4],
-            updated_at=row[5]
+            id=self._to_uuid(row['id']),
+            date=row['date'],
+            location_id=self._to_uuid(row['location_id']),
+            metadata=row['metadata'],
+            created_at=row['created_at'],
+            updated_at=row['updated_at']
         )
 
     def get_by_location(self, location_id: uuid.UUID, start_date: Optional[datetime] = None,
@@ -77,14 +106,14 @@ class VisitRepository(BaseRepository):
         results = self._execute_query(query, tuple(params))
         return [
             Visit(
-                id=row[0],
-                date=row[1],
-                location_id=row[2],
-                metadata=row[3],
-                created_at=row[4],
-                updated_at=row[5]
+                id=self._to_uuid(row['id']),
+                date=row['date'],
+                location_id=self._to_uuid(row['location_id']),
+                metadata=row['metadata'],
+                created_at=row['created_at'],
+                updated_at=row['updated_at']
             )
-            for row in results
+            for row in (results or [])
         ]
 
 class ProblemRepository(BaseRepository):
@@ -98,14 +127,14 @@ class ProblemRepository(BaseRepository):
         result = self._execute_query(query, (str(visit_id), description, severity.value, area))
         row = result[0]
         return Problem(
-            id=row[0],
-            visit_id=row[1],
-            description=row[2],
-            severity=Severity(row[3]),
-            area=row[4],
-            status=ProblemStatus(row[5]),
-            created_at=row[6],
-            updated_at=row[7]
+            id=self._to_uuid(row['id']),
+            visit_id=self._to_uuid(row['visit_id']),
+            description=row['description'],
+            severity=Severity(row['severity']),
+            area=row['area'],
+            status=ProblemStatus(row['status']),
+            created_at=row['created_at'],
+            updated_at=row['updated_at']
         )
 
     def get_by_visit(self, visit_id: uuid.UUID) -> List[Problem]:
@@ -113,14 +142,14 @@ class ProblemRepository(BaseRepository):
         results = self._execute_query(query, (str(visit_id),))
         return [
             Problem(
-                id=row[0],
-                visit_id=row[1],
-                description=row[2],
-                severity=Severity(row[3]),
-                area=row[4],
-                status=ProblemStatus(row[5]),
-                created_at=row[6],
-                updated_at=row[7]
+                id=self._to_uuid(row['id']),
+                visit_id=self._to_uuid(row['visit_id']),
+                description=row['description'],
+                severity=Severity(row['severity']),
+                area=row['area'],
+                status=ProblemStatus(row['status']),
+                created_at=row['created_at'],
+                updated_at=row['updated_at']
             )
             for row in results
         ]
@@ -144,14 +173,14 @@ class ProblemRepository(BaseRepository):
         return [
             {
                 'problem': Problem(
-                    id=row[0],
-                    visit_id=row[1],
-                    description=row[2],
-                    severity=Severity(row[3]),
-                    area=row[4],
-                    status=ProblemStatus(row[5]),
-                    created_at=row[6],
-                    updated_at=row[7]
+                    id=self._to_uuid(row['id']),
+                    visit_id=self._to_uuid(row['visit_id']),
+                    description=row['description'],
+                    severity=Severity(row['severity']),
+                    area=row['area'],
+                    status=ProblemStatus(row['status']),
+                    created_at=row['created_at'],
+                    updated_at=row['updated_at']
                 )
             }
             for row in results
@@ -161,19 +190,19 @@ class ProblemRepository(BaseRepository):
         query = """
         UPDATE problems SET status = %s, updated_at = CURRENT_TIMESTAMP
         WHERE id = %s
-        RETURNING id, visit_id, description, severity, area, status, created_at, updated_at
+        RETURNING *
         """
         result = self._execute_query(query, (status.value, str(problem_id)))
         row = result[0]
         return Problem(
-            id=row[0],
-            visit_id=row[1],
-            description=row[2],
-            severity=Severity(row[3]),
-            area=row[4],
-            status=ProblemStatus(row[5]),
-            created_at=row[6],
-            updated_at=row[7]
+            id=self._to_uuid(row['id']),
+            visit_id=self._to_uuid(row['visit_id']),
+            description=row['description'],
+            severity=Severity(row['severity']),
+            area=row['area'],
+            status=ProblemStatus(row['status']),
+            created_at=row['created_at'],
+            updated_at=row['updated_at']
         )
 
 class SolutionRepository(BaseRepository):
@@ -191,13 +220,13 @@ class SolutionRepository(BaseRepository):
         ))
         row = result[0]
         return Solution(
-            id=row[0],
-            problem_id=row[1],
-            description=row[2],
-            implemented_at=row[3],
-            effectiveness_rating=row[4],
-            created_at=row[5],
-            updated_at=row[6]
+            id=self._to_uuid(row['id']),
+            problem_id=self._to_uuid(row['problem_id']),
+            description=row['description'],
+            implemented_at=row['implemented_at'],
+            effectiveness_rating=row['effectiveness_rating'],
+            created_at=row['created_at'],
+            updated_at=row['updated_at']
         )
 
     def get_by_problem(self, problem_id: uuid.UUID) -> List[Solution]:
@@ -205,15 +234,15 @@ class SolutionRepository(BaseRepository):
         results = self._execute_query(query, (str(problem_id),))
         return [
             Solution(
-                id=row[0],
-                problem_id=row[1],
-                description=row[2],
-                implemented_at=row[3],
-                effectiveness_rating=row[4],
-                created_at=row[5],
-                updated_at=row[6]
+                id=self._to_uuid(row['id']),
+                problem_id=self._to_uuid(row['problem_id']),
+                description=row['description'],
+                implemented_at=row['implemented_at'],
+                effectiveness_rating=row['effectiveness_rating'],
+                created_at=row['created_at'],
+                updated_at=row['updated_at']
             )
-            for row in results
+            for row in (results or [])
         ]
 
 class ChronogramRepository(BaseRepository):
@@ -224,8 +253,7 @@ class ChronogramRepository(BaseRepository):
         INSERT INTO chronogram_entries 
         (visit_id, task_name, planned_start, planned_end, dependencies)
         VALUES (%s, %s, %s, %s, %s)
-        RETURNING id, visit_id, task_name, planned_start, planned_end,
-                actual_start, actual_end, status, dependencies, created_at, updated_at
+        RETURNING *
         """
         result = self._execute_query(query, (
             str(visit_id), task_name, planned_start, planned_end,
@@ -233,17 +261,17 @@ class ChronogramRepository(BaseRepository):
         ))
         row = result[0]
         return ChronogramEntry(
-            id=row[0],
-            visit_id=row[1],
-            task_name=row[2],
-            planned_start=row[3],
-            planned_end=row[4],
-            actual_start=row[5],
-            actual_end=row[6],
-            status=ChronogramStatus(row[7]),
-            dependencies=[uuid.UUID(str(d)) for d in (row[8] or [])],
-            created_at=row[9],
-            updated_at=row[10]
+            id=self._to_uuid(row['id']),
+            visit_id=self._to_uuid(row['visit_id']),
+            task_name=row['task_name'],
+            planned_start=row['planned_start'],
+            planned_end=row['planned_end'],
+            actual_start=row['actual_start'],
+            actual_end=row['actual_end'],
+            status=ChronogramStatus(row['status']),
+            dependencies=[self._to_uuid(d) for d in (row['dependencies'] or [])],
+            created_at=row['created_at'],
+            updated_at=row['updated_at']
         )
 
     def get_by_visit(self, visit_id: uuid.UUID) -> List[ChronogramEntry]:
@@ -251,22 +279,23 @@ class ChronogramRepository(BaseRepository):
         results = self._execute_query(query, (str(visit_id),))
         return [
             ChronogramEntry(
-                id=row[0],
-                visit_id=row[1],
-                task_name=row[2],
-                planned_start=row[3],
-                planned_end=row[4],
-                actual_start=row[5],
-                actual_end=row[6],
-                status=ChronogramStatus(row[7]),
-                dependencies=[uuid.UUID(str(d)) for d in (row[8] or [])],
-                created_at=row[9],
-                updated_at=row[10]
+                id=self._to_uuid(row['id']),
+                visit_id=self._to_uuid(row['visit_id']),
+                task_name=row['task_name'],
+                planned_start=row['planned_start'],
+                planned_end=row['planned_end'],
+                actual_start=row['actual_start'],
+                actual_end=row['actual_end'],
+                status=ChronogramStatus(row['status']),
+                dependencies=[self._to_uuid(d) for d in (row['dependencies'] or [])],
+                created_at=row['created_at'],
+                updated_at=row['updated_at']
             )
             for row in results
         ]
 
-    def update_progress(self, entry_id: uuid.UUID, actual_start: Optional[datetime] = None,
+    def update_progress(self, entry_id: uuid.UUID,
+                       actual_start: Optional[datetime] = None,
                        actual_end: Optional[datetime] = None,
                        status: Optional[ChronogramStatus] = None) -> ChronogramEntry:
         query = """
@@ -285,36 +314,35 @@ class ChronogramRepository(BaseRepository):
         ))
         row = result[0]
         return ChronogramEntry(
-            id=row[0],
-            visit_id=row[1],
-            task_name=row[2],
-            planned_start=row[3],
-            planned_end=row[4],
-            actual_start=row[5],
-            actual_end=row[6],
-            status=ChronogramStatus(row[7]),
-            dependencies=[uuid.UUID(str(d)) for d in (row[8] or [])],
-            created_at=row[9],
-            updated_at=row[10]
+            id=self._to_uuid(row['id']),
+            visit_id=self._to_uuid(row['visit_id']),
+            task_name=row['task_name'],
+            planned_start=row['planned_start'],
+            planned_end=row['planned_end'],
+            actual_start=row['actual_start'],
+            actual_end=row['actual_end'],
+            status=ChronogramStatus(row['status']),
+            dependencies=[self._to_uuid(d) for d in (row['dependencies'] or [])],
+            created_at=row['created_at'],
+            updated_at=row['updated_at']
         )
 
 class ChecklistTemplateRepository(BaseRepository):
-    def create(self, name: str, items: List[Dict[str, Any]], 
-               description: Optional[str] = None) -> ChecklistTemplate:
+    def create(self, name: str, items: List[Dict[str, Any]], description: Optional[str] = None) -> ChecklistTemplate:
         query = """
         INSERT INTO checklist_templates (name, description, items)
         VALUES (%s, %s, %s)
-        RETURNING id, name, description, items, created_at, updated_at
+        RETURNING *
         """
         result = self._execute_query(query, (name, description, json.dumps(items)))
         row = result[0]
         return ChecklistTemplate(
-            id=row[0],
-            name=row[1],
-            description=row[2],
-            items=row[3],
-            created_at=row[4],
-            updated_at=row[5]
+            id=self._to_uuid(row['id']),
+            name=row['name'],
+            description=row['description'],
+            items=row['items'],
+            created_at=row['created_at'],
+            updated_at=row['updated_at']
         )
 
     def get(self, template_id: uuid.UUID) -> Optional[ChecklistTemplate]:
@@ -324,12 +352,12 @@ class ChecklistTemplateRepository(BaseRepository):
             return None
         row = result[0]
         return ChecklistTemplate(
-            id=row[0],
-            name=row[1],
-            description=row[2],
-            items=row[3],
-            created_at=row[4],
-            updated_at=row[5]
+            id=self._to_uuid(row['id']),
+            name=row['name'],
+            description=row['description'],
+            items=row['items'],
+            created_at=row['created_at'],
+            updated_at=row['updated_at']
         )
 
 class VisitChecklistRepository(BaseRepository):
@@ -337,20 +365,19 @@ class VisitChecklistRepository(BaseRepository):
         query = """
         INSERT INTO visit_checklists (visit_id, template_id)
         VALUES (%s, %s)
-        RETURNING id, visit_id, template_id, completed_items, completion_status,
-                completed_at, created_at, updated_at
+        RETURNING *
         """
         result = self._execute_query(query, (str(visit_id), str(template_id)))
         row = result[0]
         return VisitChecklist(
-            id=row[0],
-            visit_id=row[1],
-            template_id=row[2],
-            completed_items=row[3],
-            completion_status=ChecklistStatus(row[4]),
-            completed_at=row[5],
-            created_at=row[6],
-            updated_at=row[7]
+            id=self._to_uuid(row['id']),
+            visit_id=self._to_uuid(row['visit_id']),
+            template_id=self._to_uuid(row['template_id']),
+            completed_items=row['completed_items'],
+            completion_status=ChecklistStatus(row['completion_status']),
+            completed_at=row['completed_at'],
+            created_at=row['created_at'],
+            updated_at=row['updated_at']
         )
 
     def update_progress(self, checklist_id: uuid.UUID, 
@@ -373,12 +400,37 @@ class VisitChecklistRepository(BaseRepository):
         ))
         row = result[0]
         return VisitChecklist(
-            id=row[0],
-            visit_id=row[1],
-            template_id=row[2],
-            completed_items=row[3],
-            completion_status=ChecklistStatus(row[4]),
-            completed_at=row[5],
-            created_at=row[6],
-            updated_at=row[7]
+            id=self._to_uuid(row['id']),
+            visit_id=self._to_uuid(row['visit_id']),
+            template_id=self._to_uuid(row['template_id']),
+            completed_items=row['completed_items'],
+            completion_status=ChecklistStatus(row['completion_status']),
+            completed_at=row['completed_at'],
+            created_at=row['created_at'],
+            updated_at=row['updated_at']
         )
+
+class LocationRepository(BaseRepository):
+    def create(self, name: str, address: str = None, coordinates: tuple = None, 
+               metadata: Dict[str, Any] = None) -> Any:
+        query = """
+        INSERT INTO locations (name, address, coordinates, metadata)
+        VALUES (%s, %s, %s, %s)
+        RETURNING id, name, address, coordinates, metadata, created_at, updated_at
+        """
+        result = self._execute_query(query, (
+            name,
+            address,
+            coordinates,
+            json.dumps(metadata or {})
+        ))
+        row = result[0]
+        return {
+            'id': self._to_uuid(row[0]),
+            'name': row[1],
+            'address': row[2],
+            'coordinates': row[3],
+            'metadata': row[4],
+            'created_at': row[5],
+            'updated_at': row[6]
+        }

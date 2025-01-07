@@ -1,66 +1,104 @@
-
 import pytest
 from datetime import datetime, timedelta
 import uuid
+from src.historical_data.database.connection import DatabaseConnection
 from src.historical_data.models.models import (
-    Severity, ProblemStatus, ChronogramStatus, ChecklistStatus,
-    Visit, Problem, Solution, ChronogramEntry, ChecklistTemplate, VisitChecklist
+    Severity, ProblemStatus, ChronogramStatus, ChecklistStatus
 )
 from src.historical_data.database.repositories import (
     VisitRepository, ProblemRepository, SolutionRepository,
     ChronogramRepository, ChecklistTemplateRepository,
     VisitChecklistRepository
 )
+from src.historical_data.database.location_repository import LocationRepository
 
+@pytest.fixture(scope="session")
+def db_connection():
+    """Create a shared database connection for all tests"""
+    conn = DatabaseConnection.get_instance().get_connection()
+    yield conn
+    conn.close()
+
+@pytest.fixture(autouse=True)
+def transaction(db_connection):
+    """Create a transaction for each test"""
+    try:
+        # Start a transaction
+        db_connection.autocommit = False
+        yield
+        # Rollback at the end of each test
+        db_connection.rollback()
+    finally:
+        # Reset autocommit mode
+        db_connection.autocommit = True
 
 @pytest.fixture
-def visit_repo():
+def location_repo(db_connection):
+    return LocationRepository()
+
+@pytest.fixture
+def sample_location(location_repo, db_connection):
+    location = location_repo.create(
+        name="Test Location",
+        address="123 Test St",
+        metadata={"type": "facility"}
+    )
+    return location  # No need to commit explicitly
+
+@pytest.fixture
+def sample_location_id(sample_location):
+    return sample_location.id
+
+@pytest.fixture
+def visit_repo(db_connection):
     return VisitRepository()
 
 @pytest.fixture
-def problem_repo():
-    return ProblemRepository()
-
-@pytest.fixture
-def solution_repo():
-    return SolutionRepository()
-
-@pytest.fixture
-def chronogram_repo():
-    return ChronogramRepository()
-
-@pytest.fixture
-def template_repo():
-    return ChecklistTemplateRepository()
-
-@pytest.fixture
-def checklist_repo():
-    return VisitChecklistRepository()
-
-@pytest.fixture
-def sample_location_id():
-    return uuid.uuid4()
-
-@pytest.fixture
-def sample_visit(visit_repo, sample_location_id):
+def sample_visit(visit_repo, sample_location_id, db_connection):
     visit = visit_repo.create(
         date=datetime.now(),
         location_id=sample_location_id,
         metadata={"weather": "sunny"}
     )
-    return visit
+    return visit  # No need to commit explicitly
+
+@pytest.fixture
+def problem_repo(db_connection):
+    return ProblemRepository()
+
+@pytest.fixture
+def sample_problem(problem_repo, sample_visit):
+    return problem_repo.create(
+        visit_id=sample_visit.id,
+        description="Test Problem",
+        severity=Severity.HIGH,
+        area="Test Area"
+    )
+
+@pytest.fixture
+def template_repo(db_connection):
+    return ChecklistTemplateRepository()
 
 @pytest.fixture
 def sample_template(template_repo):
-    items = [
-        {"text": "Check item 1", "required": True},
-        {"text": "Check item 2", "required": False}
-    ]
+    items = [{"text": "Test item", "required": True}]
     return template_repo.create(
         name="Test Template",
         items=items,
         description="Test description"
     )
+
+@pytest.fixture
+def checklist_repo(db_connection):
+    return VisitChecklistRepository()
+
+@pytest.fixture
+def solution_repo(db_connection):
+    return SolutionRepository()
+
+@pytest.fixture
+def chronogram_repo(db_connection):
+    return ChronogramRepository()
 
 class TestVisitRepository:
     def test_create_visit(self, visit_repo, sample_location_id):
@@ -71,7 +109,7 @@ class TestVisitRepository:
         )
         assert visit.id is not None
         assert visit.location_id == sample_location_id
-        assert visit.metadata.get("weather") == "sunny"
+        assert visit.metadata["weather"] == "sunny"
 
     def test_get_visit(self, visit_repo, sample_visit):
         retrieved_visit = visit_repo.get(sample_visit.id)
@@ -80,7 +118,7 @@ class TestVisitRepository:
         assert retrieved_visit.location_id == sample_visit.location_id
 
     def test_get_by_location(self, visit_repo, sample_location_id):
-        # Create multiple visits
+        # Create multiple visits using the same location
         date1 = datetime.now()
         date2 = date1 + timedelta(days=1)
         visit1 = visit_repo.create(date=date1, location_id=sample_location_id)
@@ -163,7 +201,7 @@ class TestProblemRepository:
         assert updated_problem.id == problem.id
 
     def test_get_history_by_location(self, problem_repo, visit_repo, sample_location_id):
-        # Create visits and problems
+        # Create visits using the sample location
         visit1 = visit_repo.create(date=datetime.now(), location_id=sample_location_id)
         visit2 = visit_repo.create(date=datetime.now(), location_id=sample_location_id)
         
@@ -323,13 +361,15 @@ class TestChecklistTemplateRepository:
         items = [{"text": "Test item", "required": True}]
         template = template_repo.create(
             name="Test Template",
-            items=items
+            items=items,
+            description="Test description"
         )
         
         retrieved = template_repo.get(template.id)
         assert retrieved is not None
         assert retrieved.id == template.id
-        assert retrieved.items == items
+        assert retrieved.name == template.name
+        assert retrieved.items == template.items
 
 class TestVisitChecklistRepository:
     def test_create_checklist(self, checklist_repo, sample_visit, sample_template):

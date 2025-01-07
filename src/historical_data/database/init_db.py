@@ -16,7 +16,6 @@ logger = logging.getLogger(__name__)
 
 def init_historical_database():
     """Initialize the historical data database schema."""
-    # Get database connection
     db = DatabaseConnection.get_instance()
     conn = db.get_connection()
     
@@ -27,6 +26,7 @@ def init_historical_database():
             schema_sql = schema_path.read_text()
             
             logger.info("Creating historical data schema...")
+            # Execute the entire schema as one statement
             cur.execute(schema_sql)
             
             conn.commit()
@@ -34,6 +34,7 @@ def init_historical_database():
             
     except Exception as e:
         logger.error(f"Error creating historical data schema: {str(e)}")
+        conn.rollback()
         raise
     finally:
         conn.close()

@@ -11,8 +11,18 @@ def history_service():
     return VisitHistoryService()
 
 @pytest.fixture
-def sample_location_id():
-    return uuid.uuid4()
+def sample_location(history_service):
+    # Create a location first
+    location = history_service.location_repo.create(
+        name="Test Location",
+        address="123 Test St",
+        metadata={"type": "facility"}
+    )
+    return location
+
+@pytest.fixture
+def sample_location_id(sample_location):
+    return sample_location.id
 
 @pytest.fixture
 def sample_visit(history_service, sample_location_id):
