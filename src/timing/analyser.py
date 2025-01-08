@@ -12,6 +12,7 @@ from .models import (
 )
 from src.historical_data.services.visit_history import VisitHistoryService
 from src.historical_data.models.models import Visit, ChronogramEntry, ChronogramStatus
+from collections import defaultdict
 
 class TaskAnalyzer:
     """Analyzes transcripts using GPT and historical data to extract and validate tasks"""
@@ -121,102 +122,111 @@ class TaskAnalyzer:
         historical_context: Dict
     ) -> ScheduleGraph:
         """Use GPT to analyze transcript with historical context"""
-        # Prepare historical context summary for GPT
-        context_summary = self._format_historical_context(historical_context)
-        
-        response = self.client.chat.completions.create(
-            model="gpt-4",
-            messages=[{
-                "role": "system",
-                "content": f"""You are a construction project analyzer that extracts tasks and their relationships from transcripts.
-                Consider this historical data from similar projects:
-                {context_summary}
-                
-                Use this historical context to:
-                1. Validate proposed durations against past performance
-                2. Identify potential timing risks based on past patterns
-                3. Suggest parallel execution based on successful past experiences
-                4. Adjust time estimates based on historical deviations
-                
-                For each task identify:
-                - Task name and description
-                - Duration (with unit: days, weeks, months)
-                - Dependencies on other tasks
-                - If it can be done in parallel (based on history)
-                - Any delays or waiting periods required
-                - Confidence level based on historical data"""
-            }, {
-                "role": "user",
-                "content": transcript_text
-            }],
-            functions=[{
-                "name": "extract_construction_tasks",
-                "description": "Extract tasks and relationships from construction transcript",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "tasks": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "name": {"type": "string"},
-                                    "description": {"type": "string"},
-                                    "duration": {
-                                        "type": "object",
-                                        "properties": {
-                                            "amount": {"type": "number"},
-                                            "unit": {"type": "string"}
-                                        }
-                                    },
-                                    "can_be_parallel": {"type": "boolean"},
-                                    "confidence": {"type": "number"},
-                                    "historical_deviation": {"type": "number", "nullable": true},
-                                    "responsible": {"type": "string", "nullable": true},
-                                    "location": {"type": "string", "nullable": true},
-                                    "risks": {
-                                        "type": "array",
-                                        "items": {"type": "string"}
-                                    }
-                                }
-                            }
-                        },
-                        "relationships": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "from_task": {"type": "string"},
-                                    "to_task": {"type": "string"},
-                                    "type": {"type": "string"},
-                                    "delay": {
-                                        "type": "object",
-                                        "properties": {
-                                            "amount": {"type": "number"},
-                                            "unit": {"type": "string"}
-                                        },
-                                        "nullable": true
-                                    }
-                                }
-                            }
-                        },
-                        "parallel_groups": {
-                            "type": "array",
-                            "items": {
+        try:
+            # Prepare historical context summary for GPT
+            context_summary = self._format_historical_context(historical_context)
+            
+            response = self.client.chat.completions.create(
+                model="gpt-4",
+                messages=[{
+                    "role": "system",
+                    "content": f"""You are a construction project analyzer that extracts tasks and their relationships from transcripts.
+                    Consider this historical data from similar projects:
+                    {context_summary}
+                    
+                    Use this historical context to:
+                    1. Validate proposed durations against past performance
+                    2. Identify potential timing risks based on past patterns
+                    3. Suggest parallel execution based on successful past experiences
+                    4. Adjust time estimates based on historical deviations
+                    
+                    For each task identify:
+                    - Task name and description
+                    - Duration (with unit: days, weeks, months)
+                    - Dependencies on other tasks
+                    - If it can be done in parallel (based on history)
+                    - Any delays or waiting periods required
+                    - Confidence level based on historical data"""
+                }, {
+                    "role": "user",
+                    "content": transcript_text
+                }],
+                functions=[{
+                    "name": "extract_construction_tasks",
+                    "description": "Extract tasks and relationships from construction transcript",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "tasks": {
                                 "type": "array",
-                                "items": {"type": "string"}
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "name": {"type": "string"},
+                                        "description": {"type": "string"},
+                                        "duration": {
+                                            "type": "object",
+                                            "properties": {
+                                                "amount": {"type": "number"},
+                                                "unit": {"type": "string"}
+                                            }
+                                        },
+                                        "can_be_parallel": {"type": "boolean"},
+                                        "confidence": {"type": "number"},
+                                        "historical_deviation": {"type": "number", "nullable": True},
+                                        "responsible": {"type": "string", "nullable": True},
+                                        "location": {"type": "string", "nullable": True},
+                                        "risks": {
+                                            "type": "array",
+                                            "items": {"type": "string"}
+                                        }
+                                    }
+                                }
+                            },
+                            "relationships": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "from_task": {"type": "string"},
+                                        "to_task": {"type": "string"},
+                                        "type": {"type": "string"},
+                                        "delay": {
+                                            "type": "object",
+                                            "properties": {
+                                                "amount": {"type": "number"},
+                                                "unit": {"type": "string"}
+                                            },
+                                            "nullable": True
+                                        }
+                                    }
+                                }
+                            },
+                            "parallel_groups": {
+                                "type": "array",
+                                "items": {
+                                    "type": "array",
+                                    "items": {"type": "string"}
+                                }
                             }
                         }
                     }
-                }
-            }],
-            function_call={"name": "extract_construction_tasks"}
-        )
+                }],
+                function_call={"name": "extract_construction_tasks"}
+            )
 
-        # Parse GPT response and create schedule
-        return self._create_schedule_from_gpt_response(
-            json.loads(response.choices[0].message.function_call.arguments)
-        )
+            # Safely parse GPT response
+            try:
+                gpt_data = json.loads(response.choices[0].message.function_call.arguments)
+            except (json.JSONDecodeError, AttributeError, IndexError) as e:
+                self.logger.error(f"Failed to parse GPT response: {str(e)}")
+                raise ValueError("Invalid GPT response format")
+
+            return self._create_schedule_from_gpt_response(gpt_data)
+            
+        except Exception as e:
+            self.logger.error(f"GPT analysis failed: {str(e)}")
+            raise
 
     def _enhance_with_historical_data(
         self,
@@ -368,7 +378,10 @@ class TaskAnalyzer:
             task_groups[task['name']].append(task['success'])
         
         for task_name, successes in task_groups.items():
-            success_rates[task_name] = sum(successes) / len(successes)
+            if successes:  # Check if list is not empty
+                success_rates[task_name] = sum(successes) / len(successes)
+            else:
+                success_rates[task_name] = 0.0  # Default value for no historical data
         
         return success_rates
 
@@ -395,11 +408,13 @@ class TaskAnalyzer:
         
         # Create tasks
         for task_data in response['tasks']:
+            # Add default values and handle missing duration data safely
+            duration_data = task_data.get('duration', {'amount': 1, 'unit': 'days'})
             task = Task(
                 name=task_data['name'],
                 description=task_data['description'],
-                duration=Duration(**task_data['duration']),
-                can_be_parallel=task_data['can_be_parallel'],
+                duration=Duration(**duration_data),
+                can_be_parallel=task_data.get('can_be_parallel', False),  # Add default
                 responsible=task_data.get('responsible'),
                 location=task_data.get('location'),
                 metadata={
