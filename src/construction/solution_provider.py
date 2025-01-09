@@ -113,7 +113,7 @@ class SolutionProvider:
                         solution = ProposedSolution(
                             problem_id=problem.id,
                             description=hist_sol.description,
-                            estimated_time=hist_sol.implemented_at,
+                            estimated_time=hist_sol.estimated_time,  # Using the correct attribute
                             effectiveness_rating=hist_sol.effectiveness_rating,
                             historical_success_rate=hist_sol.effectiveness_rating,
                             metadata={

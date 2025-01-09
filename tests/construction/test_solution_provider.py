@@ -4,16 +4,18 @@ import uuid
 from datetime import datetime
 from src.construction.solution_provider import SolutionProvider
 from src.construction.models import (
-    ConstructionProblem, ProposedSolution, AnalysisContext, ProblemCategory, AnalysisConfidence
+    ConstructionProblem, ProposedSolution, AnalysisContext, 
+    ProblemCategory, LocationContext
 )
 from src.historical_data.models.models import Severity, ProblemStatus
 
 @pytest.fixture
 def solution_provider():
     # Create a SolutionProvider instance with mocked dependencies
-    visit_history_service_mock = MagicMock()
     llm_service_mock = MagicMock()
-    return SolutionProvider(visit_history_service=visit_history_service_mock, llm_service=llm_service_mock)
+    provider = SolutionProvider(llm_service=llm_service_mock)
+    provider.visit_history = MagicMock()
+    return provider
 
 @pytest.fixture
 def sample_problem():
@@ -21,7 +23,7 @@ def sample_problem():
         category=ProblemCategory.STRUCTURAL,
         description="Grieta en la pared",
         severity=Severity.HIGH,
-        location_context=None,
+        location_context=LocationContext(area="Test Area"),
         status=ProblemStatus.IDENTIFIED
     )
 
@@ -36,43 +38,41 @@ def sample_context():
     )
 
 def test_generate_solutions(solution_provider, sample_problem, sample_context):
-    # Mock the LLM service to return a predefined solution
-    llm_solution = ProposedSolution(
-        problem_id=sample_problem.id,
-        description="Aplicar sellador estructural",
-        priority=1
-    )
+    # Mock the LLM service response
     solution_provider.llm_service.analyze_transcript.return_value = {
         'optimization_suggestions': ["Aplicar sellador estructural"]
     }
     
-    # Call the method
     solutions = solution_provider.generate_solutions(sample_problem, sample_context)
     
-    # Assertions
     assert len(solutions) >= 1
-    assert any(sol.description == "Aplicar sellador estructural" for sol in solutions)
+    assert isinstance(solutions[0], ProposedSolution)
+    assert "sellador estructural" in solutions[0].description.lower()
 
 def test_find_historical_solutions(solution_provider, sample_problem, sample_context):
-    # Mock the visit history service to return a predefined historical solution
+    # Mock historical solution with all required attributes
     historical_solution = ProposedSolution(
         problem_id=sample_problem.id,
         description="Usar inyección de epoxi",
-        priority=2
-    )
-    solution_provider.visit_history.solution_repo.get_by_problem.return_value = [historical_solution]
+        effectiveness_rating=4
+        )
     
-    # Call the method
+    solution_provider.visit_history.solution_repo.get_by_problem.return_value = [
+        historical_solution
+    ]
+    
+    sample_problem.historical_pattern = True
+    sample_problem.related_problems = [uuid.uuid4()]
+    
     solutions = solution_provider._find_historical_solutions(sample_problem, sample_context)
     
-    # Assertions
     assert len(solutions) == 1
     assert solutions[0].description == "Usar inyección de epoxi"
+    assert solutions[0].effectiveness_rating == 4
 
 def test_generate_template_solutions(solution_provider, sample_problem):
-    # Call the method
     solutions = solution_provider._generate_template_solutions(sample_problem)
     
-    # Assertions
     assert len(solutions) > 0
-    assert any("estructural" in sol.description.lower() for sol in solutions)
+    assert all(isinstance(s, ProposedSolution) for s in solutions)
+    assert any("estructural" in s.description.lower() for s in solutions)

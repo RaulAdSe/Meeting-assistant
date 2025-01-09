@@ -2,27 +2,17 @@ import pytest
 from unittest.mock import MagicMock
 import uuid
 from datetime import datetime
-from src.construction.solution_provider import SolutionProvider
+from src.construction.problem_analyzer import ProblemAnalyzer
 from src.construction.models import (
-    ConstructionProblem, ProposedSolution, AnalysisContext, ProblemCategory, AnalysisConfidence
+    ConstructionProblem, AnalysisContext, ProblemCategory,
+    AnalysisConfidence, LocationContext
 )
 from src.historical_data.models.models import Severity, ProblemStatus
 
 @pytest.fixture
-def solution_provider():
-    # Create a SolutionProvider instance with a mocked LLMService
+def problem_analyzer():
     llm_service_mock = MagicMock()
-    return SolutionProvider(llm_service=llm_service_mock)
-
-@pytest.fixture
-def sample_problem():
-    return ConstructionProblem(
-        category=ProblemCategory.STRUCTURAL,
-        description="Grieta en la pared",
-        severity=Severity.HIGH,
-        location_context=None,
-        status=ProblemStatus.IDENTIFIED
-    )
+    return ProblemAnalyzer(llm_service=llm_service_mock)
 
 @pytest.fixture
 def sample_context():
@@ -34,40 +24,64 @@ def sample_context():
         location_changes=[]
     )
 
-def test_generate_solutions(solution_provider, sample_problem, sample_context):
-    # Mock the LLM service to return a predefined solution
-    solution_provider.llm_service.analyze_transcript.return_value = {
-        'optimization_suggestions': ["Aplicar sellador estructural"]
+def test_analyze_transcript(problem_analyzer, sample_context):
+    transcript = "Se detectó una grieta estructural en la pared norte del edificio."
+    
+    # Mock LLM response
+    problem_analyzer.llm_service.analyze_transcript.return_value = {
+        'technical_findings': [{
+            'hallazgo': 'grieta estructural',
+            'severidad': 'Alta',  # Ensure this maps to Severity.HIGH
+            'ubicacion': 'pared norte',
+            'accion_recomendada': 'Reparar inmediatamente'
+        }]
     }
     
-    # Call the method
-    solutions = solution_provider.generate_solutions(sample_problem, sample_context)
+    problems = problem_analyzer.analyze_transcript(transcript, sample_context)
     
-    # Assertions
-    assert len(solutions) >= 1
-    assert any(sol.description == "Aplicar sellador estructural" for sol in solutions)
+    assert len(problems) == 1
+    problem = problems[0]
+    assert problem.category == ProblemCategory.STRUCTURAL
+    assert problem.severity == Severity.HIGH  # Ensure mapping is correct
+    assert problem.location_context.area == "pared norte"
 
-def test_find_historical_solutions(solution_provider, sample_problem, sample_context):
-    # Mock the visit history service to return a predefined historical solution
-    solution_provider.visit_history.solution_repo.get_by_problem.return_value = [
-        ProposedSolution(
-            problem_id=sample_problem.id,
-            description="Usar inyección de epoxi",
-            priority=2
-        )
-    ]
+def test_determine_category(problem_analyzer):
+    descriptions = {
+        "grieta en la estructura": ProblemCategory.STRUCTURAL,
+        "falta de equipo de protección": ProblemCategory.SAFETY,
+        "acabados de baja calidad": ProblemCategory.QUALITY,
+        "retraso en el cronograma": ProblemCategory.SCHEDULE
+    }
     
-    # Call the method
-    solutions = solution_provider._find_historical_solutions(sample_problem, sample_context)
-    
-    # Assertions
-    assert len(solutions) == 1
-    assert solutions[0].description == "Usar inyección de epoxi"
+    for desc, expected_category in descriptions.items():
+        assert problem_analyzer._determine_category(desc) == expected_category
 
-def test_generate_template_solutions(solution_provider, sample_problem):
-    # Call the method
-    solutions = solution_provider._generate_template_solutions(sample_problem)
+def test_assess_severity(problem_analyzer):
+    findings = {
+        "crítico": Severity.CRITICAL,
+        "riesgo alto": Severity.HIGH,  # Ensure this maps correctly
+        "moderado": Severity.MEDIUM,
+        "leve": Severity.LOW
+    }
     
-    # Assertions
-    assert len(solutions) > 0
-    assert any("estructural" in sol.description.lower() for sol in solutions)
+    for desc, expected_severity in findings.items():
+        finding = {'hallazgo': desc}
+        assert problem_analyzer._assess_severity(finding) == expected_severity
+
+def test_assess_confidence(problem_analyzer):
+    # High confidence case
+    finding_high = {
+        'severidad': 'Alta',
+        'accion_recomendada': 'Reparar'
+    }
+    assert problem_analyzer._assess_confidence(finding_high) == AnalysisConfidence.HIGH
+    
+    # Medium confidence case
+    finding_medium = {
+        'severidad': 'Alta'
+    }
+    assert problem_analyzer._assess_confidence(finding_medium) == AnalysisConfidence.MEDIUM
+    
+    # Low confidence case
+    finding_low = {}
+    assert problem_analyzer._assess_confidence(finding_low) == AnalysisConfidence.LOW

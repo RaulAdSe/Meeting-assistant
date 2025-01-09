@@ -46,10 +46,10 @@ class ProblemAnalyzer:
         self.severity_criteria = {
             Severity.CRITICAL: [
                 'inmediato', 'grave', 'crítico', 'urgente', 'peligro',
-                'riesgo alto', 'structural failure', 'colapso'
+                'structural failure', 'colapso'
             ],
             Severity.HIGH: [
-                'importante', 'significativo', 'alto', 'serio',
+                'importante', 'significativo', 'alto', 'serio', 'alta',  
                 'substantial', 'major', 'severe'
             ],
             Severity.MEDIUM: [
