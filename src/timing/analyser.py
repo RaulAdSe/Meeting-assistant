@@ -69,10 +69,9 @@ class TaskAnalyzer:
     def _get_historical_context(self, location_id: uuid.UUID) -> Dict:
         """Gather historical timing data for the location"""
         historical_context = {
-            'tasks': [],
+            'tasks': defaultdict(list),
             'patterns': [],
-            'deviations': [],
-            'success_rates': {}
+            'deviations': {}
         }
         
         try:
@@ -84,38 +83,37 @@ class TaskAnalyzer:
                 entries = self.history_service.chronogram_repo.get_by_visit(visit.id)
                 
                 for entry in entries:
-                    task_history = {
-                        'name': entry.task_name,
+                    task_data = {
                         'planned_duration': (entry.planned_end - entry.planned_start).days,
                         'actual_duration': None,
-                        'success': False
+                        'status': entry.status,
+                        'actual_start': entry.actual_start,
+                        'actual_end': entry.actual_end,
+                        'dependencies': []
                     }
                     
-                    # Calculate actual duration if task was completed
+                    # Calculate actual duration if completed
                     if entry.status == ChronogramStatus.COMPLETED and entry.actual_start and entry.actual_end:
-                        task_history['actual_duration'] = (entry.actual_end - entry.actual_start).days
-                        task_history['success'] = True
+                        task_data['actual_duration'] = (entry.actual_end - entry.actual_start).days
                     
-                    historical_context['tasks'].append(task_history)
-            
-            # Analyze patterns and calculate metrics
-            if historical_context['tasks']:
-                historical_context['patterns'] = self._analyze_timing_patterns(
-                    historical_context['tasks']
-                )
-                historical_context['success_rates'] = self._calculate_success_rates(
-                    historical_context['tasks']
-                )
-                historical_context['deviations'] = self._calculate_deviations(
-                    historical_context['tasks']
-                )
+                    # Add dependency information
+                    if entry.dependencies:
+                        for dep_id in entry.dependencies:
+                            dep_entry = next((e for e in entries if e.id == dep_id), None)
+                            if dep_entry:
+                                task_data['dependencies'].append({
+                                    'task_name': dep_entry.task_name,
+                                    'actual_end': dep_entry.actual_end
+                                })
+                    
+                    historical_context['tasks'][entry.task_name].append(task_data)
             
             return historical_context
             
         except Exception as e:
-            self.logger.warning(f"Error getting historical data: {str(e)}")
+            self.logger.error(f"Error getting historical context: {str(e)}")
             return historical_context
-
+    
     def _analyze_with_gpt(
         self,
         transcript_text: str,
@@ -236,168 +234,72 @@ class TaskAnalyzer:
             self.logger.error(f"GPT analysis failed: {str(e)}")
             raise
 
-    def _enhance_with_historical_data(
-        self,
-        schedule: ScheduleGraph,
-        location_id: uuid.UUID
-    ) -> ScheduleGraph:
-        """
-        Enhance schedule with historical insights from database.
-        
-        Args:
-            schedule: Current schedule to enhance
-            location_id: ID of the construction location
-            
-        Returns:
-            Enhanced schedule with historical insights
-        """
+    def _enhance_with_historical_data(self, schedule: ScheduleGraph, historical_context: Dict) -> ScheduleGraph:
+        """Enhance schedule with historical insights"""
         try:
-            # 1. Get historical data from database
-            past_visits = self.history_service.get_visit_history(location_id)
+            # Get historical data for task tracking
             task_history = defaultdict(list)
-            relationship_history = defaultdict(list)
             
-            # 2. Process each historical visit
-            for visit in past_visits:
-                try:
-                    # Get chronogram entries for this visit
-                    entries = self.history_service.chronogram_repo.get_by_visit(visit.id)
-                    entries_by_name = {e.task_name: e for e in entries}
-                    
-                    # Process each task entry
-                    for entry in entries:
-                        if entry.actual_start and entry.actual_end:
-                            # Record actual vs planned duration
-                            task_history[entry.task_name].append({
-                                'planned_duration': (entry.planned_end - entry.planned_start).days,
-                                'actual_duration': (entry.actual_end - entry.actual_start).days,
-                                'status': entry.status,
-                                'visit_id': visit.id,
-                                'dependencies': entry.dependencies,
-                                'completion_date': entry.actual_end
-                            })
-                            
-                            # Record relationship data
-                            if entry.dependencies:
-                                for dep_id in entry.dependencies:
-                                    if dep_id in entries_by_name:
-                                        dep_entry = entries_by_name[dep_id]
-                                        rel_key = f"{dep_entry.task_name}->{entry.task_name}"
-                                        relationship_history[rel_key].append({
-                                            'planned_gap': (entry.planned_start - dep_entry.planned_end).days,
-                                            'actual_gap': (entry.actual_start - dep_entry.actual_end).days,
-                                            'success': entry.status == ChronogramStatus.COMPLETED and 
-                                                    dep_entry.status == ChronogramStatus.COMPLETED,
-                                            'completion_date': entry.actual_end
-                                        })
-                except Exception as e:
-                    self.logger.warning(f"Error processing visit {visit.id}: {str(e)}")
-                    continue
-                
-            # 3. Enhance current tasks with historical data
+            # Process each task's historical data
+            for task_name, task_data in historical_context.get('tasks', {}).items():
+                for record in task_data:
+                    if record.get('actual_duration') is not None:
+                        task_history[task_name].append({
+                            'planned_duration': record['planned_duration'],
+                            'actual_duration': record['actual_duration'],
+                            'status': record.get('status'),
+                            'completion_date': record.get('completion_date')
+                        })
+
+            # Enhance each task with historical data
             for task_id, task in schedule.tasks.items():
                 historical_data = task_history.get(task.name, [])
-                
                 if historical_data:
-                    # Ensure metadata is initialized
-                    if not hasattr(task, 'metadata'):
-                        task.metadata = {}
-                    
                     # Focus on completed tasks
                     completed_tasks = [t for t in historical_data 
-                                    if t['status'] == ChronogramStatus.COMPLETED]
-                    recent_tasks = sorted(completed_tasks, 
-                                    key=lambda x: x['completion_date'])[-5:]  # Last 5 tasks
+                                    if t.get('status') == ChronogramStatus.COMPLETED]
                     
                     if completed_tasks:
                         # Calculate statistics
                         planned_durations = [t['planned_duration'] for t in completed_tasks]
                         actual_durations = [t['actual_duration'] for t in completed_tasks]
-                        recent_durations = [t['actual_duration'] for t in recent_tasks]
                         
-                        avg_planned = sum(planned_durations) / len(planned_durations)
-                        avg_actual = sum(actual_durations) / len(actual_durations)
-                        recent_avg = sum(recent_durations) / len(recent_durations)
-                        
-                            # Update task metadata
                         task.metadata.update({
                             'historical_count': len(completed_tasks),
-                            'avg_historical_duration': avg_actual,
-                            'recent_avg_duration': recent_avg,
+                            'avg_historical_duration': sum(actual_durations) / len(actual_durations),
                             'historical_min_duration': min(actual_durations),
                             'historical_max_duration': max(actual_durations),
-                            'typical_deviation': avg_actual - avg_planned,
-                            'recent_deviation': recent_avg - avg_planned,
-                            'success_rate': len([t for t in completed_tasks 
-                                if t['actual_duration'] <= t['planned_duration'] * 1.1]) / len(completed_tasks),
-                            'confidence_level': self._calculate_confidence_level(
-                                completed_tasks, task.duration.to_days())
+                            'typical_deviation': (sum(actual_durations) / len(actual_durations)) - 
+                                            (sum(planned_durations) / len(planned_durations))
                         })
-                        
-                        # Add warnings if needed
-                        warnings = []
-                        if abs(task.duration.to_days() - avg_actual) > 2:
-                            warnings.append(
-                                f"Historical duration ({avg_actual:.1f} days) differs significantly "
-                                f"from estimate ({task.duration.to_days():.1f} days)"
-                            )
-                        if recent_avg > avg_actual * 1.1:
-                            warnings.append(
-                                f"Recent tasks have taken longer ({recent_avg:.1f} days) "
-                                f"than historical average ({avg_actual:.1f} days)"
-                            )
-                        if warnings:
-                            task.metadata['warnings'] = warnings
 
-            # 4. Enhance relationships with historical data
-            for relationship in schedule.relationships:
-                from_task = schedule.tasks[relationship.from_task_id]
-                to_task = schedule.tasks[relationship.to_task_id]
-                rel_key = f"{from_task.name}->{to_task.name}"
+            # Process relationships
+            relationship_history = defaultdict(list)
+            for rel in schedule.relationships:
+                from_task = schedule.tasks[rel.from_task_id]
+                to_task = schedule.tasks[rel.to_task_id]
+                key = f"{from_task.name}->{to_task.name}"
                 
-                if rel_key in relationship_history:
-                    rel_data = relationship_history[rel_key]
-                    successful_sequences = [r for r in rel_data if r['success']]
-                    
-                    if successful_sequences:
-                        # Calculate timing patterns
-                        gaps = [r['actual_gap'] for r in successful_sequences]
-                        avg_gap = sum(gaps) / len(gaps)
-                        min_gap = min(gaps)
-                        max_gap = max(gaps)
-                        
-                        # Recent patterns
-                        recent_sequences = sorted(successful_sequences, 
-                                            key=lambda x: x['completion_date'])[-3:]
-                        recent_gaps = [r['actual_gap'] for r in recent_sequences]
-                        recent_avg_gap = sum(recent_gaps) / len(recent_gaps)
-                        
-                        # Ensure metadata is initialized
-                        if not hasattr(relationship, 'metadata'):
-                            relationship.metadata = {}
-                        
-                        # Update relationship metadata
-                        relationship.metadata.update({
-                            'historical_avg_gap': avg_gap,
-                            'recent_avg_gap': recent_avg_gap,
-                            'min_gap': min_gap,
-                            'max_gap': max_gap,
-                            'success_rate': len(successful_sequences) / len(rel_data),
-                            'recommended_delay': max(1, round(recent_avg_gap * 1.1))
-                        })
-                        
-                        # Add delay if historically needed
-                        if recent_avg_gap > 2 and not relationship.delay:
-                            relationship.delay = Duration(
-                                amount=round(recent_avg_gap),
-                                unit="days"
-                            )
-            
+                # Find historical gaps between these tasks
+                for hist_data in historical_context.get('tasks', {}).get(to_task.name, []):
+                    if hist_data.get('actual_start') and hist_data.get('dependencies'):
+                        for dep in hist_data['dependencies']:
+                            if dep.get('task_name') == from_task.name and dep.get('actual_end'):
+                                gap = (hist_data['actual_start'] - dep['actual_end']).days
+                                relationship_history[key].append(gap)
+
+                if relationship_history[key]:
+                    rel.metadata.update({
+                        'historical_avg_gap': sum(relationship_history[key]) / len(relationship_history[key]),
+                        'min_gap': min(relationship_history[key]),
+                        'max_gap': max(relationship_history[key])
+                    })
+
             return schedule
             
         except Exception as e:
-            self.logger.error(f"Error enhancing schedule with historical data: {str(e)}")
-            raise
+            self.logger.error(f"Error enhancing schedule: {str(e)}")
+            return schedule
 
     def _validate_and_adjust_schedule(self, schedule: ScheduleGraph) -> ScheduleGraph:
         """Validate and adjust schedule based on constraints and historical data"""
