@@ -60,13 +60,30 @@ class Task:
     """Represents a task identified in the transcript"""
     name: str
     description: str
-    duration: Duration
+    priority: TaskPriority = TaskPriority.MEDIUM
+    estimated_duration: int = 0  # Duration in minutes
+    assignee: Optional[str] = None
     id: uuid.UUID = field(default_factory=uuid.uuid4)
     can_be_parallel: bool = False
     responsible: Optional[str] = None
     location: Optional[str] = None
     status: TaskStatus = TaskStatus.PENDING
+    actual_start: Optional[datetime] = None
+    actual_end: Optional[datetime] = None
     created_at: datetime = field(default_factory=datetime.now)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    duration: Optional[Duration] = None
+
+@dataclass
+class Timeline:
+    """Represents a timeline of tasks for a visit"""
+    visit_id: uuid.UUID
+    planned_start: datetime
+    planned_end: datetime
+    tasks: List[Task]
+    id: uuid.UUID = field(default_factory=uuid.uuid4)
+    actual_start: Optional[datetime] = None
+    actual_end: Optional[datetime] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
@@ -76,7 +93,7 @@ class TaskRelationship:
     to_task_id: uuid.UUID
     relation_type: TaskRelationType
     delay: Optional[Duration] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)  # Add this line
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
 class ScheduleGraph:
@@ -86,10 +103,13 @@ class ScheduleGraph:
     parallel_groups: List[Set[uuid.UUID]] = field(default_factory=list)
 
     def add_task(self, task: Task):
+        """Add a task to the schedule"""
         self.tasks[task.id] = task
 
     def add_relationship(self, relationship: TaskRelationship):
+        """Add a relationship to the schedule"""
         self.relationships.append(relationship)
 
     def add_parallel_group(self, task_ids: Set[uuid.UUID]):
+        """Add a group of tasks that can be executed in parallel"""
         self.parallel_groups.append(task_ids)

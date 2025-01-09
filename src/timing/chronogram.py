@@ -1,7 +1,7 @@
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
-import json
-from .models import ScheduleGraph, Task, TaskRelationType
+import uuid
+from .models import Task, Duration, ScheduleGraph, TaskRelationship, TaskRelationType
 
 class ChronogramVisualizer:
     """Creates visualizations of construction schedules"""
@@ -55,20 +55,16 @@ class ChronogramVisualizer:
                 ]
                 dependency_str = f" after {','.join(dependencies)}" if dependencies else ""
                 
-                # Add risk indicators if any
-                risks = task.metadata.get('risks', [])
-                risk_indicator = " 🚨" if risks else ""
+                # Add any risk indicators and responsible person
+                risk_indicator = " 🚨" if task.metadata.get('risks') else ""
+                responsible = f" [{task.responsible}]" if task.responsible else ""
                 
                 # Format task line
                 lines.append(
-                    f"    {task.name}{risk_indicator}{dependency_str} : "
+                    f"    {task.name}{risk_indicator}{responsible}{dependency_str} : "
                     f"{task_dates_info['start'].strftime('%Y-%m-%d')}, "
                     f"{task_dates_info['end'].strftime('%Y-%m-%d')}"
                 )
-                
-                # Add risk details if any
-                for risk in risks:
-                    lines.append(f"    %% Risk: {risk}")
             
             lines.append("")
         
@@ -79,7 +75,7 @@ class ChronogramVisualizer:
         schedule: ScheduleGraph,
         start_date: datetime
     ) -> str:
-        """Generate an interactive HTML visualization using a timeline library"""
+        """Generate an interactive HTML visualization using vis-timeline"""
         task_dates = self._calculate_task_dates(schedule, start_date)
         
         # Create timeline data
@@ -99,74 +95,57 @@ class ChronogramVisualizer:
             
             timeline_data.append({
                 "id": str(task_id),
-                "name": task.name + delay_text,
+                "content": f"<div class='task-item'>"
+                          f"<strong>{task.name}</strong>{delay_text}"
+                          f"{f'<br>👤 {task.responsible}' if task.responsible else ''}"
+                          f"</div>",
                 "start": dates['start'].isoformat(),
                 "end": dates['end'].isoformat(),
-                "dependencies": [
-                    str(rel.from_task_id) 
-                    for rel in schedule.relationships 
-                    if rel.to_task_id == task_id
-                ],
-                "risks": task.metadata.get('risks', []),
-                "confidence": task.metadata.get('confidence', 1.0),
-                "responsible": task.responsible
+                "group": len(self._find_parallel_group(schedule, task_id)) > 1
             })
         
-        # Generate HTML with timeline visualization
         return f"""
         <!DOCTYPE html>
         <html>
         <head>
             <title>Cronograma de Construcción</title>
-            <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/vis-timeline/7.5.1/vis-timeline-graph2d.min.js"></script>
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-timeline/7.5.1/vis-timeline-graph2d.min.js"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/vis-timeline/7.5.1/vis-timeline-graph2d.min.css" rel="stylesheet" type="text/css" />
             <style>
-                .timeline-item {{
-                    border-radius: 4px;
-                    padding: 4px;
+                .task-item {{
+                    padding: 5px;
+                    border-radius: 3px;
                 }}
-                .high-risk {{
-                    background-color: #ffebee;
-                    border-left: 4px solid #ef5350;
+                .vis-item {{
+                    border-color: #2196F3;
+                    background-color: #E3F2FD;
                 }}
-                .low-confidence {{
-                    opacity: 0.7;
-                    border-style: dashed;
+                .vis-item.vis-selected {{
+                    border-color: #1565C0;
+                    background-color: #BBDEFB;
                 }}
             </style>
         </head>
         <body>
             <div id="timeline"></div>
             <script>
-                var data = {json.dumps(timeline_data)};
                 var container = document.getElementById('timeline');
+                var items = new vis.DataSet({str(timeline_data)});
                 
-                var items = new vis.DataSet(data.map(task => {{
-                    var className = [];
-                    if (task.risks && task.risks.length > 0) className.push('high-risk');
-                    if (task.confidence < 0.7) className.push('low-confidence');
-                    
-                    return {{
-                        id: task.id,
-                        content: `<div>
-                            <strong>${{task.name}}</strong>
-                            ${{task.responsible ? `<br>Responsable: ${{task.responsible}}` : ''}}
-                            ${{task.risks.length ? `<br>⚠️ ${{task.risks.join(', ')}}` : ''}}
-                        </div>`,
-                        start: task.start,
-                        end: task.end,
-                        className: className.join(' ')
-                    }};
-                }}));
+                var groups = new vis.DataSet([
+                    {{id: true, content: 'Tareas Paralelas'}},
+                    {{id: false, content: 'Tareas Secuenciales'}}
+                ]);
                 
                 var options = {{
+                    groupOrder: 'content',
                     editable: false,
-                    orientation: 'top',
                     stack: true,
-                    zoomable: true
+                    stackSubgroups: true,
+                    zoomKey: 'ctrlKey'
                 }};
                 
-                var timeline = new vis.Timeline(container, items, options);
+                var timeline = new vis.Timeline(container, items, groups, options);
             </script>
         </body>
         </html>
@@ -176,7 +155,7 @@ class ChronogramVisualizer:
         self,
         schedule: ScheduleGraph,
         start_date: datetime
-    ) -> Dict[str, Dict[str, datetime]]:
+    ) -> Dict[uuid.UUID, Dict[str, datetime]]:
         """Calculate start and end dates for all tasks considering dependencies"""
         task_dates = {}
         task_order = self._get_topological_order(schedule)
@@ -212,29 +191,35 @@ class ChronogramVisualizer:
         
         return task_dates
 
-    def _get_topological_order(self, schedule: ScheduleGraph) -> List[str]:
+    def _get_topological_order(self, schedule: ScheduleGraph) -> List[uuid.UUID]:
         """Get tasks in topological order (respecting dependencies)"""
-        import networkx as nx
+        # Implementation of topological sort
+        visited = set()
+        temp_mark = set()
+        order = []
         
-        # Create directed graph
-        graph = nx.DiGraph()
+        def visit(task_id: uuid.UUID):
+            if task_id in temp_mark:
+                raise ValueError("Circular dependency detected")
+            if task_id not in visited:
+                temp_mark.add(task_id)
+                
+                # Visit dependencies
+                for rel in schedule.relationships:
+                    if rel.to_task_id == task_id:
+                        visit(rel.from_task_id)
+                
+                temp_mark.remove(task_id)
+                visited.add(task_id)
+                order.append(task_id)
         
-        # Add all tasks
         for task_id in schedule.tasks:
-            graph.add_node(task_id)
+            if task_id not in visited:
+                visit(task_id)
         
-        # Add dependencies
-        for rel in schedule.relationships:
-            if rel.relation_type in [TaskRelationType.SEQUENTIAL, TaskRelationType.DELAY]:
-                graph.add_edge(rel.from_task_id, rel.to_task_id)
-        
-        # Return topological sort
-        try:
-            return list(nx.topological_sort(graph))
-        except nx.NetworkXUnfeasible:
-            raise ValueError("Circular dependency detected in task relationships")
+        return list(reversed(order))
 
-    def _group_tasks(self, schedule: ScheduleGraph) -> List[List[str]]:
+    def _group_tasks(self, schedule: ScheduleGraph) -> List[List[uuid.UUID]]:
         """Group tasks by parallel execution"""
         groups = []
         seen_tasks = set()
@@ -248,5 +233,12 @@ class ChronogramVisualizer:
         for task_id in schedule.tasks:
             if task_id not in seen_tasks:
                 groups.append([task_id])
-        
+                
         return groups
+
+    def _find_parallel_group(self, schedule: ScheduleGraph, task_id: uuid.UUID) -> set:
+        """Find the parallel group containing a task"""
+        for group in schedule.parallel_groups:
+            if task_id in group:
+                return group
+        return {task_id}  # Return singleton set if task is not in any parallel group
