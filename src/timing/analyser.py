@@ -127,33 +127,33 @@ class TaskAnalyzer:
             context_summary = self._format_historical_context(historical_context)
             
             response = self.client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o",
                 messages=[{
                     "role": "system",
-                    "content": f"""You are a construction project analyzer that extracts tasks and their relationships from transcripts.
-                    Consider this historical data from similar projects:
+                    "content": f"""Eres un analizador de proyectos de construcción que extrae tareas y sus relaciones de transcripciones.
+                    Considera estos datos históricos de proyectos similares:
                     {context_summary}
                     
-                    Use this historical context to:
-                    1. Validate proposed durations against past performance
-                    2. Identify potential timing risks based on past patterns
-                    3. Suggest parallel execution based on successful past experiences
-                    4. Adjust time estimates based on historical deviations
+                    Usa este contexto histórico para:
+                    1. Validar las duraciones propuestas contra el rendimiento pasado
+                    2. Identificar riesgos potenciales de tiempo basados en patrones anteriores
+                    3. Sugerir ejecución en paralelo basada en experiencias exitosas pasadas
+                    4. Ajustar estimaciones de tiempo basadas en desviaciones históricas
                     
-                    For each task identify:
-                    - Task name and description
-                    - Duration (with unit: days, weeks, months)
-                    - Dependencies on other tasks
-                    - If it can be done in parallel (based on history)
-                    - Any delays or waiting periods required
-                    - Confidence level based on historical data"""
+                    Para cada tarea identifica:
+                    - Nombre y descripción de la tarea
+                    - Duración (con unidad: días, semanas, meses)
+                    - Dependencias con otras tareas
+                    - Si se puede hacer en paralelo (basado en historial)
+                    - Cualquier retraso o período de espera requerido
+                    - Nivel de confianza basado en datos históricos"""
                 }, {
                     "role": "user",
                     "content": transcript_text
                 }],
                 functions=[{
                     "name": "extract_construction_tasks",
-                    "description": "Extract tasks and relationships from construction transcript",
+                    "description": "Extrae tareas y relaciones de la transcripción de construcción",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -168,7 +168,14 @@ class TaskAnalyzer:
                                             "type": "object",
                                             "properties": {
                                                 "amount": {"type": "number"},
-                                                "unit": {"type": "string"}
+                                                "unit": {
+                                                    "type": "string",
+                                                    "enum": [
+                                                        "dia", "dias", "día", "días",
+                                                        "semana", "semanas",
+                                                        "mes", "meses"
+                                                    ]
+                                                }
                                             }
                                         },
                                         "can_be_parallel": {"type": "boolean"},
@@ -190,12 +197,12 @@ class TaskAnalyzer:
                                     "properties": {
                                         "from_task": {"type": "string"},
                                         "to_task": {"type": "string"},
-                                        "type": {"type": "string"},
+                                        "type": {"type": "string", "enum": ["secuencial", "paralelo", "espera"]},
                                         "delay": {
                                             "type": "object",
                                             "properties": {
                                                 "amount": {"type": "number"},
-                                                "unit": {"type": "string"}
+                                                "unit": {"type": "string", "enum": ["dias", "semanas", "meses"]}
                                             },
                                             "nullable": True
                                         }
@@ -212,18 +219,19 @@ class TaskAnalyzer:
                         }
                     }
                 }],
-                function_call={"name": "extract_construction_tasks"}
+                function_call={"name": "extract_construction_tasks"},
+                temperature=0.3
             )
 
-            # Safely parse GPT response
+            # Parse GPT response
             try:
                 gpt_data = json.loads(response.choices[0].message.function_call.arguments)
+                return self._create_schedule_from_gpt_response(gpt_data)
+                
             except (json.JSONDecodeError, AttributeError, IndexError) as e:
                 self.logger.error(f"Failed to parse GPT response: {str(e)}")
                 raise ValueError("Invalid GPT response format")
-
-            return self._create_schedule_from_gpt_response(gpt_data)
-            
+                
         except Exception as e:
             self.logger.error(f"GPT analysis failed: {str(e)}")
             raise
@@ -231,38 +239,165 @@ class TaskAnalyzer:
     def _enhance_with_historical_data(
         self,
         schedule: ScheduleGraph,
-        historical_context: Dict
+        location_id: uuid.UUID
     ) -> ScheduleGraph:
-        """Enhance schedule with historical insights"""
-        for task_id, task in schedule.tasks.items():
-            # Find similar historical tasks
-            historical_matches = self._find_similar_tasks(
-                task.name,
-                historical_context['tasks']
-            )
-            
-            if historical_matches:
-                # Calculate average actual duration
-                actual_durations = [
-                    match['actual_duration'] 
-                    for match in historical_matches 
-                    if match['actual_duration'] is not None
-                ]
-                
-                if actual_durations:
-                    avg_duration = sum(actual_durations) / len(actual_durations)
-                    # Adjust task duration if significant deviation
-                    if abs(task.duration.to_days() - avg_duration) > 2:
-                        task.metadata['historical_warning'] = (
-                            f"Historical duration differs: {avg_duration:.1f} days"
-                        )
-                        task.metadata['historical_duration'] = avg_duration
-                
-                # Add success rate to metadata
-                success_rate = sum(1 for m in historical_matches if m['success']) / len(historical_matches)
-                task.metadata['historical_success_rate'] = success_rate
+        """
+        Enhance schedule with historical insights from database.
         
-        return schedule
+        Args:
+            schedule: Current schedule to enhance
+            location_id: ID of the construction location
+            
+        Returns:
+            Enhanced schedule with historical insights
+        """
+        try:
+            # 1. Get historical data from database
+            past_visits = self.history_service.get_visit_history(location_id)
+            task_history = defaultdict(list)
+            relationship_history = defaultdict(list)
+            
+            # 2. Process each historical visit
+            for visit in past_visits:
+                try:
+                    # Get chronogram entries for this visit
+                    entries = self.history_service.chronogram_repo.get_by_visit(visit.id)
+                    entries_by_name = {e.task_name: e for e in entries}
+                    
+                    # Process each task entry
+                    for entry in entries:
+                        if entry.actual_start and entry.actual_end:
+                            # Record actual vs planned duration
+                            task_history[entry.task_name].append({
+                                'planned_duration': (entry.planned_end - entry.planned_start).days,
+                                'actual_duration': (entry.actual_end - entry.actual_start).days,
+                                'status': entry.status,
+                                'visit_id': visit.id,
+                                'dependencies': entry.dependencies,
+                                'completion_date': entry.actual_end
+                            })
+                            
+                            # Record relationship data
+                            if entry.dependencies:
+                                for dep_id in entry.dependencies:
+                                    if dep_id in entries_by_name:
+                                        dep_entry = entries_by_name[dep_id]
+                                        rel_key = f"{dep_entry.task_name}->{entry.task_name}"
+                                        relationship_history[rel_key].append({
+                                            'planned_gap': (entry.planned_start - dep_entry.planned_end).days,
+                                            'actual_gap': (entry.actual_start - dep_entry.actual_end).days,
+                                            'success': entry.status == ChronogramStatus.COMPLETED and 
+                                                    dep_entry.status == ChronogramStatus.COMPLETED,
+                                            'completion_date': entry.actual_end
+                                        })
+                except Exception as e:
+                    self.logger.warning(f"Error processing visit {visit.id}: {str(e)}")
+                    continue
+                
+            # 3. Enhance current tasks with historical data
+            for task_id, task in schedule.tasks.items():
+                historical_data = task_history.get(task.name, [])
+                
+                if historical_data:
+                    # Ensure metadata is initialized
+                    if not hasattr(task, 'metadata'):
+                        task.metadata = {}
+                    
+                    # Focus on completed tasks
+                    completed_tasks = [t for t in historical_data 
+                                    if t['status'] == ChronogramStatus.COMPLETED]
+                    recent_tasks = sorted(completed_tasks, 
+                                    key=lambda x: x['completion_date'])[-5:]  # Last 5 tasks
+                    
+                    if completed_tasks:
+                        # Calculate statistics
+                        planned_durations = [t['planned_duration'] for t in completed_tasks]
+                        actual_durations = [t['actual_duration'] for t in completed_tasks]
+                        recent_durations = [t['actual_duration'] for t in recent_tasks]
+                        
+                        avg_planned = sum(planned_durations) / len(planned_durations)
+                        avg_actual = sum(actual_durations) / len(actual_durations)
+                        recent_avg = sum(recent_durations) / len(recent_durations)
+                        
+                            # Update task metadata
+                        task.metadata.update({
+                            'historical_count': len(completed_tasks),
+                            'avg_historical_duration': avg_actual,
+                            'recent_avg_duration': recent_avg,
+                            'historical_min_duration': min(actual_durations),
+                            'historical_max_duration': max(actual_durations),
+                            'typical_deviation': avg_actual - avg_planned,
+                            'recent_deviation': recent_avg - avg_planned,
+                            'success_rate': len([t for t in completed_tasks 
+                                if t['actual_duration'] <= t['planned_duration'] * 1.1]) / len(completed_tasks),
+                            'confidence_level': self._calculate_confidence_level(
+                                completed_tasks, task.duration.to_days())
+                        })
+                        
+                        # Add warnings if needed
+                        warnings = []
+                        if abs(task.duration.to_days() - avg_actual) > 2:
+                            warnings.append(
+                                f"Historical duration ({avg_actual:.1f} days) differs significantly "
+                                f"from estimate ({task.duration.to_days():.1f} days)"
+                            )
+                        if recent_avg > avg_actual * 1.1:
+                            warnings.append(
+                                f"Recent tasks have taken longer ({recent_avg:.1f} days) "
+                                f"than historical average ({avg_actual:.1f} days)"
+                            )
+                        if warnings:
+                            task.metadata['warnings'] = warnings
+
+            # 4. Enhance relationships with historical data
+            for relationship in schedule.relationships:
+                from_task = schedule.tasks[relationship.from_task_id]
+                to_task = schedule.tasks[relationship.to_task_id]
+                rel_key = f"{from_task.name}->{to_task.name}"
+                
+                if rel_key in relationship_history:
+                    rel_data = relationship_history[rel_key]
+                    successful_sequences = [r for r in rel_data if r['success']]
+                    
+                    if successful_sequences:
+                        # Calculate timing patterns
+                        gaps = [r['actual_gap'] for r in successful_sequences]
+                        avg_gap = sum(gaps) / len(gaps)
+                        min_gap = min(gaps)
+                        max_gap = max(gaps)
+                        
+                        # Recent patterns
+                        recent_sequences = sorted(successful_sequences, 
+                                            key=lambda x: x['completion_date'])[-3:]
+                        recent_gaps = [r['actual_gap'] for r in recent_sequences]
+                        recent_avg_gap = sum(recent_gaps) / len(recent_gaps)
+                        
+                        # Ensure metadata is initialized
+                        if not hasattr(relationship, 'metadata'):
+                            relationship.metadata = {}
+                        
+                        # Update relationship metadata
+                        relationship.metadata.update({
+                            'historical_avg_gap': avg_gap,
+                            'recent_avg_gap': recent_avg_gap,
+                            'min_gap': min_gap,
+                            'max_gap': max_gap,
+                            'success_rate': len(successful_sequences) / len(rel_data),
+                            'recommended_delay': max(1, round(recent_avg_gap * 1.1))
+                        })
+                        
+                        # Add delay if historically needed
+                        if recent_avg_gap > 2 and not relationship.delay:
+                            relationship.delay = Duration(
+                                amount=round(recent_avg_gap),
+                                unit="days"
+                            )
+            
+            return schedule
+            
+        except Exception as e:
+            self.logger.error(f"Error enhancing schedule with historical data: {str(e)}")
+            raise
 
     def _validate_and_adjust_schedule(self, schedule: ScheduleGraph) -> ScheduleGraph:
         """Validate and adjust schedule based on constraints and historical data"""
@@ -401,24 +536,31 @@ class TaskAnalyzer:
         
         return deviations
 
+
     def _create_schedule_from_gpt_response(self, response: Dict) -> ScheduleGraph:
         """Create ScheduleGraph from GPT response"""
         schedule = ScheduleGraph(tasks={}, relationships=[])
         task_ids = {}
         
-        # Create tasks
-        for task_data in response['tasks']:
+        # Create tasks with proper metadata handling
+        for task_data in response.get('tasks', []):
             # Add default values and handle missing duration data safely
             duration_data = task_data.get('duration', {'amount': 1, 'unit': 'days'})
+            
+            # Ensure confidence is a float if present
+            confidence = task_data.get('confidence')
+            if confidence is not None:
+                confidence = float(confidence)
+                
             task = Task(
                 name=task_data['name'],
-                description=task_data['description'],
+                description=task_data.get('description', ''),
                 duration=Duration(**duration_data),
-                can_be_parallel=task_data.get('can_be_parallel', False),  # Add default
+                can_be_parallel=task_data.get('can_be_parallel', False),
                 responsible=task_data.get('responsible'),
                 location=task_data.get('location'),
                 metadata={
-                    'confidence': task_data.get('confidence', 0.0),
+                    'confidence': confidence,
                     'historical_deviation': task_data.get('historical_deviation'),
                     'risks': task_data.get('risks', [])
                 }
@@ -464,24 +606,25 @@ class TaskAnalyzer:
         """Validate if a group of tasks can feasibly be executed in parallel"""
         tasks = [schedule.tasks[task_id] for task_id in task_group]
         
-        # Check total resource requirements
+        # Check total duration - parallel tasks shouldn't be too long
         total_duration = sum(task.duration.to_days() for task in tasks)
         if total_duration > 90:  # More than 3 months parallel is risky
             return False
             
-        # Check for tasks with low confidence
+        # Check for tasks with low confidence - handle None values
         low_confidence_tasks = [
             task for task in tasks 
-            if task.metadata.get('confidence', 0) < 0.7
+            if task.metadata.get('confidence') is not None and 
+            float(task.metadata['confidence']) < 0.7
         ]
         if low_confidence_tasks:
             return False
             
-        # Check for high-risk tasks
+        # Check for high-risk tasks - handle potential missing 'risks' key
         high_risk_tasks = [
             task for task in tasks
             if any('alto riesgo' in risk.lower() 
-                  for risk in task.metadata.get('risks', []))
+                for risk in task.metadata.get('risks', []))
         ]
         if high_risk_tasks:
             return False

@@ -27,14 +27,33 @@ class Duration:
     unit: str
     
     def to_days(self) -> float:
-        if self.unit.lower() in ['day', 'days']:
+        """Convert duration to days, supporting both English and Spanish units"""
+        unit = self.unit.lower()
+        
+        # English units
+        if unit in ['day', 'days']:
             return self.amount
-        elif self.unit.lower() in ['week', 'weeks']:
+        elif unit in ['week', 'weeks']:
             return self.amount * 7
-        elif self.unit.lower() in ['month', 'months']:
+        elif unit in ['month', 'months']:
+            return self.amount * 30
+        
+        # Spanish units
+        elif unit in ['dia', 'dias', 'día', 'días']:
+            return self.amount
+        elif unit in ['semana', 'semanas']:
+            return self.amount * 7
+        elif unit in ['mes', 'meses']:
             return self.amount * 30
         else:
-            raise ValueError(f"Unsupported duration unit: {self.unit}")
+            supported_units = [
+                'day/days', 'week/weeks', 'month/months',
+                'dia/días', 'semana/semanas', 'mes/meses'
+            ]
+            raise ValueError(
+                f"Unsupported duration unit: {self.unit}. "
+                f"Supported units: {', '.join(supported_units)}"
+            )
 
 @dataclass
 class Task:
@@ -57,6 +76,7 @@ class TaskRelationship:
     to_task_id: uuid.UUID
     relation_type: TaskRelationType
     delay: Optional[Duration] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)  # Add this line
 
 @dataclass
 class ScheduleGraph:
