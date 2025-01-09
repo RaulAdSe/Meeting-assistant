@@ -205,11 +205,7 @@ class EnhancedReportFormatter:
         """Format the problems and solutions section"""
         sections = ["## Problems and Solutions\n"]
         
-        problems = construction_analysis.get('problems', [])
-        solutions = construction_analysis.get('solutions', {})
-        
-        for problem in problems:
-            problem_id = problem.get('id')
+        for problem in construction_analysis.get('problems', []):
             severity = problem.get('severity', 'Unknown')
             description = problem.get('description', 'No description available')
             location = problem.get('location_context', {}).get('area', 'Unknown Area')
@@ -218,14 +214,15 @@ class EnhancedReportFormatter:
             sections.append(f"**Severity:** {severity}")
             sections.append(f"**Description:** {description}\n")
             
-            # Add solutions if available for this problem
-            if problem_id and problem_id in solutions:
+            # Add solutions if available
+            solutions = construction_analysis.get('solutions', {}).get(problem['id'], [])
+            if solutions:
                 sections.append("#### Proposed Solutions:")
-                for solution in solutions[problem_id]:
+                for solution in solutions:
                     sections.append(f"- {solution.get('description', 'No description')}")
                     if solution.get('estimated_time'):
                         sections.append(f"  - Estimated time: {solution['estimated_time']} minutes")
-                sections.append("")
+            sections.append("")
             
         return "\n".join(sections)
 
