@@ -47,40 +47,45 @@ def sample_schedule(sample_tasks):
     
     # Add tasks to schedule and store their IDs
     foundation, electrical, plumbing = sample_tasks
+    task_ids = {}
     
-    # Add tasks in specific order for consistent testing
-    schedule.add_task(foundation)
-    schedule.add_task(electrical)
-    schedule.add_task(plumbing)
+    # Add each task and store its ID
+    for task in [foundation, electrical, plumbing]:
+        schedule.add_task(task)
+        task_ids[task.name] = task.id
     
-    # Create relationships
-    relationships = [
-        TaskRelationship(
-            from_task_id=foundation.id,
-            to_task_id=electrical.id,
-            relation_type=TaskRelationType.SEQUENTIAL
-        ),
-        TaskRelationship(
-            from_task_id=foundation.id,
-            to_task_id=plumbing.id,
-            relation_type=TaskRelationType.SEQUENTIAL
-        )
-    ]
+    # Create relationships using stored IDs
+    schedule.add_relationship(TaskRelationship(
+        from_task_id=task_ids["Foundation Work"],
+        to_task_id=task_ids["Electrical Installation"],
+        relation_type=TaskRelationType.SEQUENTIAL
+    ))
     
-    for rel in relationships:
-        schedule.add_relationship(rel)
+    schedule.add_relationship(TaskRelationship(
+        from_task_id=task_ids["Foundation Work"],
+        to_task_id=task_ids["Plumbing Installation"],
+        relation_type=TaskRelationType.SEQUENTIAL
+    ))
     
-    # Add parallel group for installations
-    schedule.add_parallel_group({electrical.id, plumbing.id})
+    # Add parallel group using stored IDs
+    schedule.add_parallel_group({
+        task_ids["Electrical Installation"],
+        task_ids["Plumbing Installation"]
+    })
     
     return schedule
 
 class TestChronogramVisualizer:
     def test_mermaid_generation(self, visualizer, sample_schedule):
         """Test Mermaid.js Gantt diagram generation"""
+        # Debug print
+        print("Available task IDs:", list(sample_schedule.tasks.keys()))
+        for task in sample_schedule.tasks.values():
+            print(f"Task: {task.name}, ID: {task.id}")
+        
         start_date = datetime(2024, 1, 1)
         gantt = visualizer.generate_mermaid_gantt(sample_schedule, start_date)
-        
+            
         # Check basic structure
         assert "gantt" in gantt
         assert "dateFormat" in gantt
