@@ -33,11 +33,11 @@ class LocationContext:
 @dataclass
 class ConstructionProblem:
     """Represents a construction problem identified during analysis"""
-    id: uuid.UUID = field(default_factory=uuid.uuid4)
     category: ProblemCategory
     description: str
     severity: Severity  # Using historical_data Severity enum
     location_context: LocationContext
+    id: uuid.UUID = field(default_factory=uuid.uuid4)
     identified_at: datetime = field(default_factory=datetime.now)
     status: ProblemStatus = ProblemStatus.IDENTIFIED  # Using historical_data ProblemStatus
     confidence: AnalysisConfidence = AnalysisConfidence.MEDIUM
@@ -48,9 +48,9 @@ class ConstructionProblem:
 @dataclass
 class ProposedSolution:
     """Represents a proposed solution to a construction problem"""
-    id: uuid.UUID = field(default_factory=uuid.uuid4)
     problem_id: uuid.UUID
     description: str
+    id: uuid.UUID = field(default_factory=uuid.uuid4)
     estimated_time: Optional[int] = None  # in minutes
     estimated_cost: Optional[float] = None
     required_resources: List[str] = field(default_factory=list)
