@@ -13,6 +13,7 @@ from src.construction.expert import ConstructionExpert
 from src.timing.analyser import TaskAnalyzer
 from src.timing.chronogram import ChronogramVisualizer
 from src.report_generation.llm_service import LLMService
+from .chronogram_formatter import ChronogramFormatter
 
 @dataclass
 class ReportSection:
