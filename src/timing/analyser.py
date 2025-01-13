@@ -44,6 +44,9 @@ class TaskAnalyzer:
         Returns:
             ScheduleGraph with tasks and relationships, enhanced with historical data
         """
+        if not transcript_text.strip():
+            raise ValueError("Empty transcript text")
+            
         try:
             # Get historical data first
             historical_context = self._get_historical_context(location_id)
@@ -453,7 +456,7 @@ class TaskAnalyzer:
             confidence = task_data.get('confidence')
             if confidence is not None:
                 confidence = float(confidence)
-                
+            
             task = Task(
                 name=task_data['name'],
                 description=task_data.get('description', ''),
@@ -469,9 +472,9 @@ class TaskAnalyzer:
             )
             schedule.add_task(task)
             task_ids[task_data['name']] = task.id
-
-        # Create relationships
-        for rel_data in response['relationships']:
+        
+        # Create relationships (safely handle missing relationships)
+        for rel_data in response.get('relationships', []):
             try:
                 from_id = task_ids[rel_data['from_task']]
                 to_id = task_ids[rel_data['to_task']]
@@ -484,11 +487,11 @@ class TaskAnalyzer:
                     delay=Duration(**rel_data['delay']) if rel_data.get('delay') else None
                 )
                 schedule.add_relationship(relationship)
-            except KeyError:
+            except KeyError as e:
                 self.logger.warning(f"Invalid task reference in relationship: {rel_data}")
                 continue
-
-        # Add parallel groups
+        
+        # Add parallel groups (safely)
         for group in response.get('parallel_groups', []):
             try:
                 task_group = {task_ids[task_name] for task_name in group}
@@ -497,7 +500,7 @@ class TaskAnalyzer:
             except KeyError:
                 self.logger.warning(f"Invalid task reference in parallel group: {group}")
                 continue
-
+        
         return schedule
 
     def _validate_parallel_group_feasibility(

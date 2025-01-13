@@ -5,31 +5,32 @@ import numpy as np
 from datetime import datetime
 import uuid
 import os
+import logging
+
 
 from src.batch_processing.processors.enhanced_batch_transcriber import EnhancedBatchTranscriber
 from src.timing.models import Task, Duration, ScheduleGraph
 
 class TestEnhancedBatchTranscriber:
     @pytest.fixture
-    def audio_file(self, tmp_path):
-        """Create a real test audio file with a simple sine wave"""
-        audio_path = tmp_path / "test_audio.wav"
-        sample_rate = 44100
-        duration = 2  # seconds
+    def audio_file(self):
+        """Use a real audio file from the data/raw directory"""
+        raw_data_dir = Path("data/raw")
         
-        # Generate sine wave
-        t = np.linspace(0, duration, int(sample_rate * duration))
-        audio_data = np.sin(2 * np.pi * 440 * t)  # 440 Hz sine wave
-        audio_data = (audio_data * 32767).astype(np.int16)
+        # Log the directory being accessed
+        logging.info(f"Looking for audio files in: {raw_data_dir.resolve()}")
         
-        with wave.open(str(audio_path), 'w') as wav_file:
-            wav_file.setnchannels(1)
-            wav_file.setsampwidth(2)
-            wav_file.setframerate(sample_rate)
-            wav_file.writeframes(audio_data.tobytes())
-            
-        return str(audio_path)
-
+        audio_files = list(raw_data_dir.glob("*.m4a"))
+        
+        # Log the files found
+        logging.info(f"Audio files found: {[str(file) for file in audio_files]}")
+        
+        if not audio_files:
+            raise FileNotFoundError("No audio files found in data/raw directory")
+        
+        # Return the first audio file found
+        return str(audio_files[0])
+    
     @pytest.fixture
     def transcriber(self):
         """Create an EnhancedBatchTranscriber instance"""
