@@ -41,6 +41,7 @@ class EnhancedReportFormatter:
         visit_id: uuid.UUID,
         location_id: uuid.UUID,
         output_dir: Path,
+        analysis_data: Optional[Dict[str, Any]] = None,
         start_date: Optional[datetime] = None
     ) -> Dict[str, Path]:
         """
@@ -51,6 +52,7 @@ class EnhancedReportFormatter:
             visit_id: UUID of the current visit
             location_id: UUID of the construction site location
             output_dir: Directory to save the report
+            analysis_data: Optional pre-computed analysis data
             start_date: Optional start date for chronogram
             
         Returns:
@@ -61,13 +63,24 @@ class EnhancedReportFormatter:
             self.logger.info("Processing location data...")
             location_data = self.location_processor.process_transcript(transcript_text)
             
-            # Get construction analysis
-            self.logger.info("Analyzing construction aspects...")
-            construction_analysis = self.construction_expert.analyze_visit(
-                visit_id=visit_id,
-                transcript_text=transcript_text,
-                location_id=location_id
-            )
+            # Use provided analysis data or generate new analysis
+            if analysis_data:
+                construction_analysis = analysis_data
+            else:
+                # Get construction analysis
+                self.logger.info("Analyzing construction aspects...")
+                analysis_result = self.construction_expert.analyze_visit(
+                    visit_id=visit_id,
+                    transcript_text=transcript_text,
+                    location_id=location_id
+                )
+                construction_analysis = {
+                    'executive_summary': "Visit analysis completed successfully",
+                    'problems': analysis_result.problems,
+                    'solutions': analysis_result.solutions,
+                    'confidence_scores': analysis_result.confidence_scores,
+                    'metadata': analysis_result.metadata
+                }
             
             # Get timing analysis
             self.logger.info("Analyzing timing and tasks...")
@@ -157,9 +170,17 @@ class EnhancedReportFormatter:
 
     def _format_header(self, location_data: Dict) -> str:
         """Format the report header with site information"""
-        main_site = location_data.get('main_site', {})
-        company = main_site.get('company', 'Unknown Company')
-        site = main_site.get('site', 'Unknown Location')
+        main_site = location_data.get('main_site', None)
+        
+        # Ensure main_site is not None and is a Location object
+        if main_site is not None:
+            # Access attributes directly
+            company = getattr(main_site, 'company', 'Unknown Company')
+            site = getattr(main_site, 'site', 'Unknown Site')
+        else:
+            company = 'Unknown Company'
+            site = 'Unknown Site'
+    
         
         return f"""# Construction Site Visit Report
 
@@ -188,17 +209,19 @@ class EnhancedReportFormatter:
     def _format_location_analysis(self, location_data: Dict) -> str:
         """Format the location analysis section"""
         sections = ["## Location Analysis\n"]
-        
+
         # Add movement tracking
         if location_data.get('location_changes'):
             sections.append("### Movement Timeline")
             for change in location_data['location_changes']:
-                time = change.get('timestamp', '').strftime('%H:%M:%S')
-                area = change.get('area', 'Unknown Area')
-                subloc = change.get('sublocation', '')
-                sections.append(f"- **{time}** - {area}" + 
-                              (f" ({subloc})" if subloc else ""))
-        
+                # Access attributes directly
+                time = change.timestamp.strftime('%H:%M:%S') if change.timestamp else 'Unknown Time'
+                area = change.area or 'Unknown Area'
+                sublocation = change.sublocation or 'Unknown Sublocation'
+                notes = change.notes or 'No notes'
+
+                sections.append(f"- {time}: {area} ({sublocation}) - {notes}")
+
         return "\n".join(sections)
 
     def _format_problems_section(self, construction_analysis: Dict) -> str:
@@ -206,22 +229,39 @@ class EnhancedReportFormatter:
         sections = ["## Problems and Solutions\n"]
         
         for problem in construction_analysis.get('problems', []):
-            severity = problem.get('severity', 'Unknown')
-            description = problem.get('description', 'No description available')
-            location = problem.get('location_context', {}).get('area', 'Unknown Area')
+            # Handle both dictionary and object formats
+            if isinstance(problem, dict):
+                severity = problem.get('severity', 'Unknown')
+                description = problem.get('description', 'No description available')
+                location_context = problem.get('location_context', {})
+                location = location_context.get('area', 'Unknown Area')
+                problem_id = problem.get('id')
+            else:
+                severity = problem.severity
+                description = problem.description
+                location = getattr(problem.location_context, 'area', 'Unknown Area')
+                problem_id = problem.id
             
             sections.append(f"### Problem in {location}")
             sections.append(f"**Severity:** {severity}")
             sections.append(f"**Description:** {description}\n")
             
             # Add solutions if available
-            solutions = construction_analysis.get('solutions', {}).get(problem['id'], [])
+            solutions = construction_analysis.get('solutions', {}).get(str(problem_id), [])
             if solutions:
                 sections.append("#### Proposed Solutions:")
                 for solution in solutions:
-                    sections.append(f"- {solution.get('description', 'No description')}")
-                    if solution.get('estimated_time'):
-                        sections.append(f"  - Estimated time: {solution['estimated_time']} minutes")
+                    # Handle both dictionary and object formats
+                    if isinstance(solution, dict):
+                        solution_desc = solution.get('description', 'No description')
+                        est_time = solution.get('estimated_time')
+                    else:
+                        solution_desc = solution.description
+                        est_time = solution.estimated_time
+                    
+                    sections.append(f"- {solution_desc}")
+                    if est_time:
+                        sections.append(f"  - Estimated time: {est_time} minutes")
             sections.append("")
             
         return "\n".join(sections)

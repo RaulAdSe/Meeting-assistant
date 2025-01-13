@@ -157,9 +157,16 @@ class EnhancedReportFormatter:
 
     def _format_header(self, location_data: Dict) -> str:
         """Format the report header with site information"""
-        main_site = location_data.get('main_site', {})
-        company = main_site.get('company', 'Unknown Company')
-        site = main_site.get('site', 'Unknown Location')
+        main_site = location_data.get('main_site', None)
+        
+        # Ensure main_site is not None and is a Location object
+        if main_site is not None:
+            # Access attributes directly
+            company = getattr(main_site, 'company', 'Unknown Company')
+            site = getattr(main_site, 'site', 'Unknown Site')
+        else:
+            company = 'Unknown Company'
+            site = 'Unknown Site'
         
         return f"""# Construction Site Visit Report
 

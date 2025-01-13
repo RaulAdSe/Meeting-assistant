@@ -24,12 +24,14 @@ class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, uuid.UUID):
             return str(obj)
-        elif hasattr(obj, '__dict__'):
-            return obj.__dict__
         elif isinstance(obj, datetime):
             return obj.isoformat()
         elif isinstance(obj, Enum):
             return obj.value
+        elif isinstance(obj, Path):  # Handle PosixPath and other Path objects
+            return str(obj)
+        elif hasattr(obj, '__dict__'):
+            return obj.__dict__
         return super().default(obj)
     
 def convert_uuid_keys_to_str(d):
@@ -260,6 +262,7 @@ class EnhancedBatchTranscriber:
             location_id = location.id
 
             # Process each file sequentially
+            all_transcripts = []
             for audio_file in session.files:
                 self.logger.info(f"Processing file: {audio_file.path}")
                 try:
@@ -275,6 +278,7 @@ class EnhancedBatchTranscriber:
                             'duration': audio_file.duration
                         }
                         session_results['transcripts'].append(transcript_data)
+                        all_transcripts.append(result['transcript']['text'])
                         
                         # Save individual transcript
                         transcript_path = output_dir / f"{Path(audio_file.path).stem}_transcript.txt"
@@ -290,15 +294,37 @@ class EnhancedBatchTranscriber:
             if not session_results['transcripts']:
                 raise BatchProcessingError("No transcripts were successfully processed")
 
-            # Generate report
+            # Generate report using all transcripts
             if location_id:
+                combined_transcript = "\n".join(all_transcripts)
+                analysis_result = self.construction_expert.analyze_visit(
+                    visit_id=uuid.uuid4(),
+                    transcript_text=combined_transcript,
+                    location_id=location_id
+                )
+
+                # Convert AnalysisResult to dictionary format for report formatter
+                analysis_dict = {
+                    'executive_summary': "Visit analysis completed successfully",
+                    'problems': [self._problem_to_dict(p) for p in analysis_result.problems],
+                    'solutions': {
+                        str(pid): [self._solution_to_dict(s) for s in solutions]
+                        for pid, solutions in analysis_result.solutions.items()
+                    },
+                    'confidence_scores': analysis_result.confidence_scores,
+                    'metadata': analysis_result.metadata
+                }
+
                 report_files = await self.report_formatter.generate_comprehensive_report(
-                    transcript_text="\n".join([t['text'] for t in session_results['transcripts']]),
+                    transcript_text=combined_transcript,
                     visit_id=uuid.uuid4(),
                     location_id=location_id,
-                    output_dir=output_dir
+                    output_dir=output_dir,
+                    analysis_data=analysis_dict
                 )
                 session_results.update(report_files)
+
+            session_results = convert_uuid_keys_to_str(session_results)
 
             # Save session transcript
             session_transcript_path = output_dir / "session_transcript.txt"
@@ -317,6 +343,11 @@ class EnhancedBatchTranscriber:
                     f.write("-" * 40 + "\n")
                     f.write(transcript['text'])
                     f.write("\n\n")
+
+            # Save session analysis to JSON
+            session_analysis_path = output_dir / "session_analysis.json"
+            with open(session_analysis_path, "w", encoding="utf-8") as f:
+                json.dump(session_results, f, cls=CustomJSONEncoder, indent=4)
 
             return session_results
 
@@ -384,3 +415,26 @@ class EnhancedBatchTranscriber:
                 address="Unknown",
                 metadata={}
             )
+        
+    def _problem_to_dict(self, problem) -> Dict[str, Any]:
+        """Convert a ConstructionProblem to dictionary format."""
+        return {
+            'id': str(problem.id),
+            'category': problem.category,
+            'description': problem.description,
+            'severity': problem.severity,
+            'location_context': {
+                'area': problem.location_context.area,
+                'sub_location': problem.location_context.sub_location
+            } if problem.location_context else {},
+            'status': problem.status
+        }
+
+    def _solution_to_dict(self, solution) -> Dict[str, Any]:
+        """Convert a ProposedSolution to dictionary format."""
+        return {
+            'description': solution.description,
+            'estimated_time': solution.estimated_time,
+            'priority': solution.priority,
+            'effectiveness_rating': solution.effectiveness_rating
+        }

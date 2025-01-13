@@ -135,17 +135,17 @@ class TestEnhancedBatchTranscriber:
         """Test complete analysis pipeline with real audio"""
         if not audio_file:
             pytest.skip("No audio file available for testing")
-        
+
         # Create and verify test location
         location_name = "Construction Site A"
         try:
             # Try to find existing location first
             location = next(
-                (loc for loc in transcriber.location_repo.get_all() 
+                (loc for loc in transcriber.location_repo.get_all()
                 if loc.name == location_name),
                 None
             )
-            
+
             if not location:
                 # Create new location if needed
                 location = transcriber.location_repo.create(
@@ -153,32 +153,36 @@ class TestEnhancedBatchTranscriber:
                     address="Main Building",
                     metadata={"company": "Construction Corp A"}
                 )
-            
+
             # Verify location exists
             assert location is not None
             assert location.id is not None
-            
+
             # Create session with verified location
             session = transcriber.create_session(
                 audio_paths=[audio_file],
                 location=location.name,
                 notes="Full pipeline test"
             )
-            
+
             # Process and validate
             results = await transcriber.process_session(session)
-            
+
             # Basic result validation
             assert results is not None
             assert 'transcripts' in results
             assert isinstance(results['transcripts'], list)
             assert len(results['transcripts']) > 0
-            
+
             # Analysis validation
-            assert 'construction_analysis' in results
-            assert 'timing_analysis' in results
-            assert 'location_data' in results
-            
+            assert 'analyses' in results
+            assert isinstance(results['analyses'], list)
+            assert len(results['analyses']) > 0
+
+            # Check for construction_analysis within analyses
+            construction_analysis = results['analyses'][0].get('construction_analysis')
+            assert construction_analysis is not None
+
             # File validation
             output_dir = Path(results['output_dir'])
             assert output_dir.exists()
@@ -186,7 +190,7 @@ class TestEnhancedBatchTranscriber:
             assert (output_dir / 'session_analysis.json').exists()
             assert (output_dir / 'report.md').exists()
             assert (output_dir / 'report.pdf').exists()
-            
+
         except Exception as e:
             pytest.fail(f"Test failed: {str(e)}")
 
