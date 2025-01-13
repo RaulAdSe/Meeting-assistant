@@ -43,6 +43,32 @@ def convert_uuid_keys_to_str(d):
     else:
         return d
     
+def process_timestamp(timestamp):
+    """Process a timestamp, handling None values and float timestamps."""
+    if timestamp is None:
+        logging.warning("Timestamp is None, using default value.")
+        return datetime.now()  # or another default value
+    try:
+        # Check if the timestamp is a float (Unix timestamp)
+        if isinstance(timestamp, float):
+            return datetime.fromtimestamp(timestamp)
+        # If it's a string, parse it
+        return datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+    except Exception as e:
+        logging.error(f"Error processing timestamp {timestamp}: {str(e)}")
+        return None
+
+def convert_sets_to_lists(data):
+    """Recursively convert all sets in a data structure to lists."""
+    if isinstance(data, dict):
+        return {k: convert_sets_to_lists(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [convert_sets_to_lists(i) for i in data]
+    elif isinstance(data, set):
+        return list(data)
+    else:
+        return data
+    
 class EnhancedBatchTranscriber:
     """Enhanced batch transcriber that integrates construction and timing analysis."""
     
@@ -89,7 +115,7 @@ class EnhancedBatchTranscriber:
                 
                 audio_file = AudioFile(
                     path=path,
-                    creation_time=datetime.fromtimestamp(path.stat().st_ctime),
+                    creation_time=process_timestamp(path.stat().st_ctime),  # Use the utility function
                     size=path.stat().st_size,
                     duration=len(audio) / 1000.0,  # Convert to seconds
                     metadata={
@@ -323,9 +349,6 @@ class EnhancedBatchTranscriber:
                     analysis_data=analysis_dict
                 )
                 session_results.update(report_files)
-
-            session_results = convert_uuid_keys_to_str(session_results)
-
             # Save session transcript
             session_transcript_path = output_dir / "session_transcript.txt"
             with open(session_transcript_path, "w", encoding="utf-8") as f:
@@ -343,11 +366,13 @@ class EnhancedBatchTranscriber:
                     f.write("-" * 40 + "\n")
                     f.write(transcript['text'])
                     f.write("\n\n")
-
             # Save session analysis to JSON
             session_analysis_path = output_dir / "session_analysis.json"
+
+            session_results = convert_uuid_keys_to_str(session_results)
+            session_results = convert_sets_to_lists(session_results)
             with open(session_analysis_path, "w", encoding="utf-8") as f:
-                json.dump(session_results, f, cls=CustomJSONEncoder, indent=4)
+                json.dump(session_results,   f, cls=CustomJSONEncoder, indent=4)
 
             return session_results
 
