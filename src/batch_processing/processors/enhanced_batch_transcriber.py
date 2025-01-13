@@ -5,6 +5,8 @@ import uuid
 import logging
 import json
 from pydub import AudioSegment
+# The import statement for pytest-asyncio seems incorrect. It should be imported as a regular module.
+import pytest_asyncio
 
 from src.transcriber import EnhancedTranscriber
 from src.construction.expert import ConstructionExpert
@@ -14,6 +16,7 @@ from src.batch_processing.models.session import AudioSession, AudioFile
 from src.batch_processing.exceptions import BatchProcessingError, FileProcessingError
 from src.historical_data.services.visit_history import VisitHistoryService
 from src.historical_data.database.location_repository import LocationRepository
+from src.batch_processing.formatters.enhanced_formatter import EnhancedReportFormatter
 
 from enum import Enum
 
@@ -56,6 +59,10 @@ class EnhancedBatchTranscriber:
         # Initialize repositories
         self.location_repo = LocationRepository()
         self.history_service = VisitHistoryService()
+
+        # Initialize report formatter
+        self.report_formatter = EnhancedReportFormatter()
+
 
     def create_session(
         self, 
@@ -114,32 +121,51 @@ class EnhancedBatchTranscriber:
         try:
             # Get basic transcription
             transcript_result = self.transcriber.process_audio(audio_path)
+            if not transcript_result or 'transcript' not in transcript_result:
+                raise FileProcessingError("Transcription failed")
+                
+            # Get location data first
+            location_data = self.location_processor.process_transcript(
+                transcript_result['transcript']['text']
+            )
+            
+            # Create or get location - this will return a Location object
+            location = self._get_or_create_location(location_data)
+            location_id = location.id if location else uuid.uuid4()
             
             # Create visit ID for tracking
             visit_id = uuid.uuid4()
             
-            # Create or get location
-            location_data = self.location_processor.process_transcript(transcript_result['transcript']['text'])
-            location = self._get_or_create_location(location_data)
-            
-            # Access location ID correctly
-            location_id = location.get('id')  # Use .get() for dictionary
-            
-            # Perform comprehensive analysis
-            analysis = self.analyze_transcript(
-                transcript_text=transcript_result['transcript']['text'],
+            # Get construction analysis
+            construction_analysis = self.construction_expert.analyze_visit(
                 visit_id=visit_id,
+                transcript_text=transcript_result['transcript']['text'],
+                location_id=location_id
+            )
+            
+            # Get timing analysis
+            timing_analysis = self.task_analyzer.analyze_transcript(
+                transcript_text=transcript_result['transcript']['text'],
                 location_id=location_id
             )
             
             return {
                 'transcript': transcript_result['transcript'],
-                'construction_analysis': analysis['construction_analysis'],
-                'timing_analysis': analysis['timing_analysis'],
-                'location_data': analysis['location_data'],
+                'construction_analysis': {
+                    'problems': construction_analysis.problems,
+                    'solutions': construction_analysis.solutions,
+                    'confidence_scores': construction_analysis.confidence_scores
+                },
+                'timing_analysis': {
+                    'tasks': timing_analysis.tasks,
+                    'relationships': timing_analysis.relationships,
+                    'parallel_groups': timing_analysis.parallel_groups
+                },
+                'location_data': location_data,
                 'metadata': {
                     **transcript_result['metadata'],
                     'visit_id': str(visit_id),
+                    'location_id': str(location_id),
                     'analyzed_at': datetime.now().isoformat()
                 }
             }
@@ -203,185 +229,156 @@ class EnhancedBatchTranscriber:
             self.logger.error(f"Error analyzing transcript: {str(e)}")
             raise
 
-    def process_session(self, session: AudioSession) -> Dict[str, Any]:
-            """Process all files in a session with comprehensive analysis."""
-            try:
-                # Create output directory for session
-                output_dir = Path("reports") / session.session_id
-                output_dir.mkdir(parents=True, exist_ok=True)
+    async def process_session(self, session: AudioSession) -> Dict[str, Any]:
+        """Process all files in a session with comprehensive analysis."""
+        try:
+            # Create output directory for session
+            output_dir = Path("reports") / session.session_id
+            output_dir.mkdir(parents=True, exist_ok=True)
 
-                session_results = {
-                    'session_id': session.session_id,
-                    'location': session.location,
-                    'start_time': session.start_time.isoformat(),
-                    'analyses': [],
-                    'transcripts': [],
-                    'metadata': {
-                        'total_files': len(session.files),
-                        'total_duration': session.total_duration,
-                        'notes': session.notes
-                    },
-                    'output_dir': str(output_dir)
-                }
-                combined_analysis = {}
-                latest_location_data = None
-                
-                # Process each file sequentially
-                for audio_file in session.files:
-                    self.logger.info(f"Processing file: {audio_file.path}")
-                    try:
-                        # Process audio and get analysis
-                        result = self.process_audio(str(audio_file.path))
-                        session_results['analyses'].append(result)
-                        
-                        # Combine analyses for root level access
-                        if 'construction_analysis' in result:
-                            combined_analysis['construction_analysis'] = result['construction_analysis']
-                        if 'timing_analysis' in result:
-                            combined_analysis['timing_analysis'] = result['timing_analysis']
-                        if 'location_data' in result:
-                            latest_location_data = result['location_data']
-                            combined_analysis['location_data'] = result['location_data']
-                        
-                        # Add transcript to transcripts list and save to file
-                        if 'transcript' in result:
-                            transcript_data = {
-                                'text': result['transcript']['text'],
-                                'file': str(audio_file.path),
-                                'duration': audio_file.duration
-                            }
-                            session_results['transcripts'].append(transcript_data)
-                            
-                            # Save individual transcript
-                            transcript_path = Path(output_dir) / f"{Path(audio_file.path).stem}_transcript.txt"
-                            with open(transcript_path, "w", encoding="utf-8") as f:
-                                f.write(result['transcript']['text'])
-                            
-                        audio_file.processed = True
-                        
-                    except Exception as e:
-                        self.logger.error(f"Error processing {audio_file.path}: {str(e)}")
-                        continue
+            session_results = {
+                'session_id': session.session_id,
+                'location': session.location,
+                'start_time': session.start_time.isoformat(),
+                'analyses': [],
+                'transcripts': [],
+                'metadata': {
+                    'total_files': len(session.files),
+                    'total_duration': session.total_duration,
+                    'notes': session.notes
+                },
+                'output_dir': str(output_dir)
+            }
+            
+            # Get or create location for session
+            location = self.location_repo.get_by_name(session.location)
+            if not location:
+                location = self.location_repo.create(
+                    name=session.location, 
+                    address=session.location
+                )
+            location_id = location.id
 
-                combined_analysis = convert_uuid_keys_to_str(combined_analysis)
-                # Save combined session transcript
-                session_transcript_path = Path(output_dir) / "session_transcript.txt"
-                with open(session_transcript_path, "w", encoding="utf-8") as f:
-                    f.write(f"Session ID: {session.session_id}\n")
-                    f.write(f"Location: {session.location}\n")
-                    f.write(f"Date: {session.start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                    f.write(f"Total Duration: {session.total_duration:.2f} seconds\n")
-                    if session.notes:
-                        f.write(f"Notes: {session.notes}\n")
-                    f.write("\n=== Transcripts ===\n\n")
+            # Process each file sequentially
+            for audio_file in session.files:
+                self.logger.info(f"Processing file: {audio_file.path}")
+                try:
+                    # Process audio and get analysis
+                    result = self.process_audio(str(audio_file.path))
+                    session_results['analyses'].append(result)
                     
-                    for idx, transcript in enumerate(session_results['transcripts'], 1):
-                        f.write(f"File {idx}: {Path(transcript['file']).name}\n")
-                        f.write(f"Duration: {transcript['duration']:.2f} seconds\n")
-                        f.write("-" * 40 + "\n")
-                        f.write(transcript['text'])
-                        f.write("\n\n")
+                    # Add transcript
+                    if 'transcript' in result:
+                        transcript_data = {
+                            'text': result['transcript']['text'],
+                            'file': str(audio_file.path),
+                            'duration': audio_file.duration
+                        }
+                        session_results['transcripts'].append(transcript_data)
+                        
+                        # Save individual transcript
+                        transcript_path = output_dir / f"{Path(audio_file.path).stem}_transcript.txt"
+                        with open(transcript_path, "w", encoding="utf-8") as f:
+                            f.write(result['transcript']['text'])
+                    
+                    audio_file.processed = True
+                    
+                except Exception as e:
+                    self.logger.error(f"Error processing {audio_file.path}: {str(e)}")
+                    continue
+            
+            if not session_results['transcripts']:
+                raise BatchProcessingError("No transcripts were successfully processed")
 
-                # Save session analysis
-                analysis_path = Path(output_dir) / "session_analysis.json"
-                with open(analysis_path, "w", encoding="utf-8") as f:
-                    json.dump({
-                        'session_id': session.session_id,
-                        'location': session.location,
-                        'total_files': len(session.files),
-                        'total_duration': session.total_duration,
-                        'notes': session.notes,
-                        'analysis_timestamp': datetime.now().isoformat(),
-                        'construction_analysis': combined_analysis.get('construction_analysis', {}),
-                        'timing_analysis': combined_analysis.get('timing_analysis', {}),
-                        'location_data': latest_location_data
-                }, f, indent=2, cls=CustomJSONEncoder)
-                # Merge combined analysis into results
-                session_results.update(combined_analysis)
-                return session_results
+            # Generate report
+            if location_id:
+                report_files = await self.report_formatter.generate_comprehensive_report(
+                    transcript_text="\n".join([t['text'] for t in session_results['transcripts']]),
+                    visit_id=uuid.uuid4(),
+                    location_id=location_id,
+                    output_dir=output_dir
+                )
+                session_results.update(report_files)
+
+            # Save session transcript
+            session_transcript_path = output_dir / "session_transcript.txt"
+            with open(session_transcript_path, "w", encoding="utf-8") as f:
+                f.write(f"Session ID: {session.session_id}\n")
+                f.write(f"Location: {session.location}\n")
+                f.write(f"Date: {session.start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Total Duration: {session.total_duration:.2f} seconds\n")
+                if session.notes:
+                    f.write(f"Notes: {session.notes}\n")
+                f.write("\n=== Transcripts ===\n\n")
                 
-            except Exception as e:
-                self.logger.error(f"Session processing error: {str(e)}")
-                raise BatchProcessingError(f"Error processing session: {str(e)}")
+                for idx, transcript in enumerate(session_results['transcripts'], 1):
+                    f.write(f"File {idx}: {Path(transcript['file']).name}\n")
+                    f.write(f"Duration: {transcript['duration']:.2f} seconds\n")
+                    f.write("-" * 40 + "\n")
+                    f.write(transcript['text'])
+                    f.write("\n\n")
+
+            return session_results
+
+        except Exception as e:
+            self.logger.error(f"Session processing error: {str(e)}")
+            raise BatchProcessingError(f"Error processing session: {str(e)}")
 
     def _get_or_create_location(self, location_data: Dict[str, Any]):
+        """Get existing location or create new one from location data."""
         try:
             main_site = location_data.get('main_site', {})
-            company = getattr(main_site, 'company', None) or 'Unknown Company'
-            site = getattr(main_site, 'site', None) or 'Unknown Site'
+            
+            # Extract company and site names safely
+            company = getattr(main_site, 'company', None) or main_site.get('company', 'Unknown Company')
+            site = getattr(main_site, 'site', None) or main_site.get('site', 'Unknown Site')
+            
+            location_name = f"{company} - {site}"
             
             # Try to find existing location
-            locations = self.location_repo._execute_query(
-                "SELECT id, name, address, metadata FROM locations WHERE name = %s",
-                (f"{company} - {site}",)
-            )
+            location = self.location_repo.get_by_name(location_name)
             
-            if locations:
-                # Access as dictionary
-                return {
-                    'id': locations[0]['id'],
-                    'name': locations[0]['name'],
-                    'address': locations[0]['address'],
-                    'metadata': locations[0]['metadata']
-                }
+            if location:
+                return location
             
             # Create new location
-            location = self.location_repo.create(
-                name=f"{company} - {site}",
+            return self.location_repo.create(
+                name=location_name,
                 address=site,
                 metadata={'company': company}
             )
             
-            # Ensure dictionary format
-            if not isinstance(location, dict):
-                location = {
-                    'id': location.id,
-                    'name': location.name,
-                    'address': location.address,
-                    'metadata': location.metadata
-                }
-            return location
-            
         except Exception as e:
-            self.logger.error(f"Error creating location: {str(e)}")
-            return {
-                'id': uuid.uuid4(),
-                'name': "Unknown Location",
-                'address': "Unknown",
-                'metadata': {}
-            }
+            self.logger.error(f"Error in _get_or_create_location: {str(e)}")
+            # Return a default location
+            return self.location_repo.create(
+                name="Unknown Location",
+                address="Unknown",
+                metadata={}
+            )
 
     def _get_or_create_location_by_name(self, location_name: str):
         """Get existing location or create new one by name."""
         try:
             # Try to find existing location
-            locations = self.location_repo._execute_query(
-                "SELECT id, name, address, metadata FROM locations WHERE name = %s",
-                (location_name,)
-            )
+            existing_locations = list(filter(
+                lambda x: x.name == location_name,
+                self.location_repo.get_all()
+            ))
             
-            if locations:
-                return locations[0]
+            if existing_locations:
+                return existing_locations[0]
             
-            # Create new location
-            location = self.location_repo.create(
+            # Create new location if not found
+            return self.location_repo.create(
                 name=location_name,
                 address=location_name,
                 metadata={}
             )
             
-            # Convert to dict if not already
-            if not isinstance(location, dict):
-                location = {
-                    'id': location.id,
-                    'name': location.name,
-                    'address': location.address,
-                    'metadata': location.metadata
-                }
-            
         except Exception as e:
-            self.logger.error(f"Error creating location: {str(e)}")
-            # Return a default location
+            self.logger.error(f"Error handling location: {str(e)}")
+            # Create a default location as fallback
             return self.location_repo.create(
                 name="Unknown Location",
                 address="Unknown",
