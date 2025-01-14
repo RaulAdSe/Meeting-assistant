@@ -17,9 +17,9 @@ class TaskPriority(str, Enum):
     LOW = "low"
 
 class TaskRelationType(str, Enum):
-    SEQUENTIAL = "sequential"
-    PARALLEL = "parallel"
-    DELAY = "delay"
+    SEQUENTIAL = "secuencial"  # Change from "sequential"
+    PARALLEL = "paralelo"     # Change from "parallel" 
+    DELAY = "espera"         # Keep this as is
 
 @dataclass
 class Duration:

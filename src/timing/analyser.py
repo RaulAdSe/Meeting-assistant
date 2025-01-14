@@ -443,11 +443,12 @@ class TaskAnalyzer:
 
 
     def _create_schedule_from_gpt_response(self, response: Dict) -> ScheduleGraph:
-        """Create ScheduleGraph from GPT response"""
+        """Create ScheduleGraph from GPT response with improved task name matching"""
         schedule = ScheduleGraph(tasks={}, relationships=[])
         task_ids = {}
+        task_name_map = {}  # Map for fuzzy matching task names
         
-        # Create tasks with proper metadata handling
+        # First pass: Create all tasks
         for task_data in response.get('tasks', []):
             # Add default values and handle missing duration data safely
             duration_data = task_data.get('duration', {'amount': 1, 'unit': 'days'})
@@ -471,37 +472,93 @@ class TaskAnalyzer:
                 }
             )
             schedule.add_task(task)
+            
+            # Store both exact and normalized task names for matching
             task_ids[task_data['name']] = task.id
+            normalized_name = self._normalize_task_name(task_data['name'])
+            task_name_map[normalized_name] = task.id
         
-        # Create relationships (safely handle missing relationships)
+        # Second pass: Create relationships with robust name matching
         for rel_data in response.get('relationships', []):
             try:
-                from_id = task_ids[rel_data['from_task']]
-                to_id = task_ids[rel_data['to_task']]
-                rel_type = TaskRelationType[rel_data['type'].upper()]
+                # Try to find task IDs using various matching methods
+                from_id = self._find_task_id(rel_data['from_task'], task_ids, task_name_map)
+                to_id = self._find_task_id(rel_data['to_task'], task_ids, task_name_map)
                 
-                relationship = TaskRelationship(
-                    from_task_id=from_id,
-                    to_task_id=to_id,
-                    relation_type=rel_type,
-                    delay=Duration(**rel_data['delay']) if rel_data.get('delay') else None
-                )
-                schedule.add_relationship(relationship)
-            except KeyError as e:
-                self.logger.warning(f"Invalid task reference in relationship: {rel_data}")
+                if from_id and to_id:
+                    rel_type = TaskRelationType[rel_data['type'].upper()]
+                    relationship = TaskRelationship(
+                        from_task_id=from_id,
+                        to_task_id=to_id,
+                        relation_type=rel_type,
+                        delay=Duration(**rel_data['delay']) if rel_data.get('delay') else None
+                    )
+                    schedule.add_relationship(relationship)
+                else:
+                    self.logger.warning(
+                        f"Skipping relationship due to unmatched tasks: {rel_data['from_task']} -> {rel_data['to_task']}"
+                    )
+            except Exception as e:
+                self.logger.warning(f"Error creating relationship {rel_data}: {str(e)}")
                 continue
         
-        # Add parallel groups (safely)
+        # Add parallel groups with robust name matching
         for group in response.get('parallel_groups', []):
             try:
-                task_group = {task_ids[task_name] for task_name in group}
-                if self._validate_parallel_group_feasibility(task_group, schedule):
+                task_group = set()
+                for task_name in group:
+                    task_id = self._find_task_id(task_name, task_ids, task_name_map)
+                    if task_id:
+                        task_group.add(task_id)
+                    else:
+                        self.logger.warning(f"Task not found for parallel group: {task_name}")
+                
+                if task_group and self._validate_parallel_group_feasibility(task_group, schedule):
                     schedule.add_parallel_group(task_group)
-            except KeyError:
-                self.logger.warning(f"Invalid task reference in parallel group: {group}")
+            except Exception as e:
+                self.logger.warning(f"Error creating parallel group {group}: {str(e)}")
                 continue
         
         return schedule
+
+    def _normalize_task_name(self, name: str) -> str:
+        """Normalize task name for fuzzy matching"""
+        import unicodedata
+        import re
+        
+        # Convert to lowercase and remove accents
+        name = name.lower()
+        name = ''.join(c for c in unicodedata.normalize('NFD', name)
+                    if unicodedata.category(c) != 'Mn')
+        
+        # Remove special characters and extra spaces
+        name = re.sub(r'[^\w\s]', '', name)
+        name = re.sub(r'\s+', ' ', name).strip()
+        
+        return name
+
+    def _find_task_id(self, task_name: str, task_ids: Dict, task_name_map: Dict) -> Optional[uuid.UUID]:
+        """Find task ID using various matching methods"""
+        # Try exact match first
+        if task_name in task_ids:
+            return task_ids[task_name]
+        
+        # Try normalized match
+        normalized_name = self._normalize_task_name(task_name)
+        if normalized_name in task_name_map:
+            return task_name_map[normalized_name]
+        
+        # Try fuzzy matching if exact and normalized matches fail
+        try:
+            from difflib import get_close_matches
+            normalized_names = list(task_name_map.keys())
+            matches = get_close_matches(normalized_name, normalized_names, n=1, cutoff=0.8)
+            if matches:
+                return task_name_map[matches[0]]
+        except Exception as e:
+            self.logger.debug(f"Fuzzy matching failed for {task_name}: {str(e)}")
+        
+        return None
 
     def _validate_parallel_group_feasibility(
         self, 

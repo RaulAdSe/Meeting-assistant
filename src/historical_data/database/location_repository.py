@@ -64,7 +64,7 @@ class LocationRepository:
         ))
         row = result[0]
         return Location(
-            id=self._to_uuid(row['id']),
+            id=uuid.UUID(row['id']),  # Ensure UUID conversion
             name=row['name'],
             address=row['address'],
             metadata=row['metadata'],
@@ -100,7 +100,7 @@ class LocationRepository:
             
         row = result[0]
         return Location(
-            id=self._to_uuid(row['id']),
+            id=uuid.UUID(row['id']),  # Ensure UUID conversion
             name=row['name'],
             address=row['address'],
             metadata=row['metadata'],

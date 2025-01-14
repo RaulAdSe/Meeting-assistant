@@ -61,8 +61,21 @@ class EnhancedReportFormatter:
         try:
             # Process location data
             self.logger.info("Processing location data...")
-            location_data = self.location_processor.process_transcript(transcript_text)
-            
+            try:
+                location_data = self.location_processor.process_transcript(transcript_text)
+                if not location_data:
+                    self.logger.warning("No location data found, using defaults")
+                    location_data = {
+                        'main_site': {'company': 'Unknown Company', 'site': 'Unknown Site'},
+                        'location_changes': []
+                    }
+            except Exception as e:
+                self.logger.error(f"Error processing location data: {str(e)}")
+                location_data = {
+                    'main_site': {'company': 'Unknown Company', 'site': 'Unknown Site'},
+                    'location_changes': []
+                }
+
             # Use provided analysis data or generate new analysis
             if analysis_data:
                 construction_analysis = analysis_data

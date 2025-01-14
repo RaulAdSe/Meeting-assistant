@@ -106,3 +106,8 @@ class Location:
     metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
+    
+    def __post_init__(self):
+        # Ensure id is UUID
+        if isinstance(self.id, str):
+            self.id = uuid.UUID(self.id)
