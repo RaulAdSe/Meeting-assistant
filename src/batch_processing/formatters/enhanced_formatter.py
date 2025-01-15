@@ -204,20 +204,24 @@ class EnhancedReportFormatter:
 
 ---
 """
+    
 
-    def _format_executive_summary(self, construction_analysis: Dict) -> str:
-        """Format the executive summary section"""
-        summary = construction_analysis.get('executive_summary', 'No summary available.')
-        confidence = construction_analysis.get('confidence_scores', {}).get('overall', 0)
+    def _format_executive_summary(self, analysis: Dict) -> str:
+        """Format executive summary with proper structure"""
+        summary = analysis.get('executive_summary', 'No summary available.')
+        observations = self._format_observations(analysis.get('vision_general', {}))
+        confidence = analysis.get('confidence_scores', {}).get('overall', 0)
         
         return f"""## Executive Summary
 
-{summary}
+    {summary}
 
-**Analysis Confidence:** {confidence:.1%}
+    ### Key Observations:
+    {observations}
 
----
-"""
+    **Analysis Confidence:** {confidence:.1%}
+
+    ---"""
 
     def _format_location_analysis(self, location_data: Dict) -> str:
         """Format the location analysis section"""
@@ -294,6 +298,98 @@ class EnhancedReportFormatter:
             sections.append(f"- **Priority:** {priority}")
             sections.append(f"- **Assigned to:** {assigned}\n")
         
+        return "\n".join(sections)
+    
+    def _format_observations(self, vision_general: Dict) -> str:
+        """Format general observations and key findings from the visit analysis.
+        
+        Args:
+            vision_general: Dictionary containing general observations and visited areas
+            
+        Returns:
+            Formatted string with observations
+        """
+        sections = []
+        
+        # Add visited areas and their observations
+        if vision_general.get('areas_visitadas'):
+            for area in vision_general['areas_visitadas']:
+                sections.append(f"#### {area['area']}")
+                
+                # Add key observations
+                if area.get('observaciones_clave'):
+                    sections.append("**Key Observations:**")
+                    for obs in area['observaciones_clave']:
+                        sections.append(f"- {obs}")
+                
+                # Add identified problems
+                if area.get('problemas_identificados'):
+                    sections.append("\n**Issues Identified:**")
+                    for problem in area['problemas_identificados']:
+                        sections.append(f"- {problem}")
+                
+                sections.append("")  # Add spacing between areas
+        
+        # Add general observations if available
+        if vision_general.get('observaciones_generales'):
+            sections.append("#### General Observations")
+            for obs in vision_general['observaciones_generales']:
+                sections.append(f"- {obs}")
+        
+        # If no content was generated, provide a default message
+        if not sections:
+            return "No observations available."
+            
+        return "\n".join(sections)
+
+    def _format_executive_summary(self, analysis: Dict) -> str:
+        """Format executive summary with proper structure"""
+        return f"""## Executive Summary
+
+{analysis.get('resumen_ejecutivo', 'No summary available.')}
+
+### Key Observations:
+{self._format_observations(analysis.get('vision_general', {}))}
+
+**Analysis Confidence:** {analysis.get('confidence_scores', {}).get('overall', 0):.1%}
+
+---"""
+        
+    def _format_severity(self, severity: str) -> str:
+        """Format severity levels with proper capitalization and translation."""
+        severity_map = {
+            'alta': 'High',
+            'Alta': 'High',
+            'media': 'Medium',
+            'Media': 'Medium',
+            'baja': 'Low',
+            'Baja': 'Low',
+            'crítica': 'Critical',
+            'Crítica': 'Critical'
+        }
+        return severity_map.get(severity, severity)
+
+    def _format_follow_up_section(self, analysis: Dict) -> str:
+        """Enhanced follow-up section with proper task organization"""
+        sections = ["## Follow-up Items\n"]
+        
+        if analysis.get('tareas_pendientes'):
+            # Group tasks by priority
+            tasks_by_priority = dict(list)
+            for task in analysis['tareas_pendientes']:
+                tasks_by_priority[task['prioridad']].append(task)
+
+            for priority in ['Alta', 'Media', 'Baja']:
+                if tasks_by_priority[priority]:
+                    sections.append(f"\n### {priority} Priority Tasks")
+                    for task in tasks_by_priority[priority]:
+                        sections.append(f"""
+- **Task:** {task['tarea']}
+  - Location: {task['ubicacion']}
+  - Assigned to: {task['asignado_a']}
+  - Deadline: {task['plazo']}
+""")
+
         return "\n".join(sections)
 
     async def _generate_report_files(
