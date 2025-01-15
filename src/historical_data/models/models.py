@@ -111,3 +111,21 @@ class Location:
         # Ensure id is UUID
         if isinstance(self.id, str):
             self.id = uuid.UUID(self.id)
+        elif not isinstance(self.id, uuid.UUID):
+            raise ValueError(f"Invalid id type: {type(self.id)}")
+            
+        # Ensure name is string
+        if isinstance(self.name, uuid.UUID):
+            self.name = str(self.name)
+        elif not isinstance(self.name, str):
+            self.name = str(self.name)
+            
+        # Ensure address is string if provided
+        if self.address is not None:
+            if isinstance(self.address, uuid.UUID):
+                self.address = str(self.address)
+            elif not isinstance(self.address, str):
+                self.address = str(self.address)
+                
+    def __str__(self):
+        return self.name

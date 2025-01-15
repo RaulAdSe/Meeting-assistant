@@ -10,6 +10,10 @@ from src.batch_processing.processors.enhanced_batch_transcriber import EnhancedB
 from src.batch_processing.models.session import AudioSession, AudioFile
 from src.historical_data.database.init_db import init_historical_database
 
+import traceback
+import sys
+sys.excepthook = lambda t, v, tb: print(''.join(traceback.format_exception(t, v, tb)))
+
 class TestEnhancedBatchTranscriber:
     @pytest.fixture(scope="session", autouse=True)
     def setup_database(self):

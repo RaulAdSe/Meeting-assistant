@@ -25,6 +25,11 @@ class AudioSession:
     notes: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self):
+        # Ensure location is a string
+        if self.location is not None and not isinstance(self.location, str):
+            self.location = str(self.location)
+
     @property
     def total_duration(self) -> float:
         """Calculate total duration of all processed files"""

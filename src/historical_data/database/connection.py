@@ -1,14 +1,11 @@
 import os
 import psycopg2
-import psycopg2.extras
 from typing import Optional
 from dotenv import load_dotenv
 from pathlib import Path
 import logging
 
 # Enable UUID adaptation
-psycopg2.extras.register_uuid()
-
 class DatabaseConnection:
     _instance: Optional['DatabaseConnection'] = None
     
@@ -33,7 +30,7 @@ class DatabaseConnection:
         self.db_user = os.getenv('DB_USER', 'postgres')
         self.db_password = os.getenv('DB_PASSWORD', '')
         
-    def get_connection(self):
+    def get_connection(self): 
         """Create and return a database connection with UUID support"""
         try:
             conn = psycopg2.connect(
@@ -41,9 +38,8 @@ class DatabaseConnection:
                 port=self.db_port,
                 dbname=self.db_name,
                 user=self.db_user,
-                password=self.db_password,
-                cursor_factory=psycopg2.extras.RealDictCursor
-            )
+                password=self.db_password
+                )
             return conn
             
         except Exception as e:

@@ -159,10 +159,25 @@ class VisitHistoryService:
             raise
 
     def get_visit_history(self, location_id: uuid.UUID,
-                         start_date: Optional[datetime] = None,
-                         end_date: Optional[datetime] = None) -> List[Visit]:
+                        start_date: Optional[datetime] = None,
+                        end_date: Optional[datetime] = None) -> List[Visit]:
         """Get visit history for a location."""
         try:
+            # Convert string to UUID if needed
+            if isinstance(location_id, str):
+                try:
+                    location_id = uuid.UUID(location_id)
+                except ValueError:
+                    # If string is not a valid UUID, try to find location by name
+                    location = self.location_repo.get_by_name(location_id)
+                    if not location:
+                        # Create new location if it doesn't exist
+                        location = self.location_repo.create(
+                            name=location_id,
+                            address="Unknown Address"
+                        )
+                    location_id = location.id
+
             # Verify location exists
             location = self.location_repo.get(location_id)
             if not location:

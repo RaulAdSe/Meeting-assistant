@@ -2,7 +2,7 @@ from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime
 import json
-import psycopg2.extras
+
 from ..models.models import (  # Fixed import path
     Visit, Problem, Solution, ChronogramEntry,
     ChecklistTemplate, VisitChecklist,
@@ -10,7 +10,6 @@ from ..models.models import (  # Fixed import path
 )
 from src.speakers.database.connection import DatabaseConnection  # Full import path
 
-psycopg2.extras.register_uuid()
 
 class BaseRepository:
     def __init__(self, connection=None):
@@ -22,7 +21,7 @@ class BaseRepository:
         if self._connection:
             return self._connection
         return self.db.get_connection()
-
+        
     def _execute_query(self, query: str, params: tuple = None) -> Optional[List[Dict]]:
         """Execute a query and return results"""
         conn = self._get_connection()
@@ -32,13 +31,13 @@ class BaseRepository:
             conn.autocommit = True
         
         try:
-            # Use RealDictCursor to get dictionary results
-            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            with conn.cursor() as cur:
                 if params:
                     params = tuple(str(p) if isinstance(p, uuid.UUID) else p for p in params)
                 cur.execute(query, params)
                 if cur.description:  # If the query returns data
-                    return cur.fetchall()
+                    columns = [desc[0] for desc in cur.description]
+                    return [dict(zip(columns, row)) for row in cur.fetchall()]
                 return None
         finally:
             if close_conn:
@@ -268,55 +267,59 @@ class ChronogramRepository(BaseRepository):
     def create(self, visit_id: uuid.UUID, task_name: str,
                planned_start: datetime, planned_end: datetime,
                dependencies: List[uuid.UUID] = None) -> ChronogramEntry:
+        """Create a new chronogram entry."""
         query = """
         INSERT INTO chronogram_entries 
         (visit_id, task_name, planned_start, planned_end, dependencies)
         VALUES (%s, %s, %s, %s, %s)
         RETURNING *
         """
+        # Convert dependencies to list of strings if provided
+        deps_array = [str(d) for d in dependencies] if dependencies else []
+        
         result = self._execute_query(query, (
-            str(visit_id), task_name, planned_start, planned_end,
-            [str(d) for d in (dependencies or [])]
+            str(visit_id),
+            task_name,
+            planned_start,
+            planned_end,
+            deps_array
         ))
+        
+        if not result:
+            raise ValueError("Failed to create chronogram entry")
+            
         row = result[0]
+        
+        # Handle dependencies safely
+        dep_list = []
+        if row['dependencies']:
+            for dep in row['dependencies']:
+                try:
+                    if dep and str(dep).strip():  # Check if dep is not empty
+                        dep_list.append(self._to_uuid(dep))
+                except (ValueError, AttributeError):
+                    continue  # Skip invalid UUIDs
+        
+        # Create ChronogramEntry with safe values
         return ChronogramEntry(
             id=self._to_uuid(row['id']),
             visit_id=self._to_uuid(row['visit_id']),
             task_name=row['task_name'],
             planned_start=row['planned_start'],
             planned_end=row['planned_end'],
-            actual_start=row['actual_start'],
-            actual_end=row['actual_end'],
-            status=ChronogramStatus(row['status']),
-            dependencies=[self._to_uuid(d) for d in (row['dependencies'] or [])],
+            actual_start=row.get('actual_start'),
+            actual_end=row.get('actual_end'),
+            status=ChronogramStatus(row.get('status', 'planned')),
+            dependencies=dep_list,
             created_at=row['created_at'],
             updated_at=row['updated_at']
         )
-
-    def get_by_visit(self, visit_id: uuid.UUID) -> List[ChronogramEntry]:
-        query = "SELECT * FROM chronogram_entries WHERE visit_id = %s ORDER BY planned_start"
-        results = self._execute_query(query, (str(visit_id),))
-        return [
-            ChronogramEntry(
-                id=self._to_uuid(row['id']),
-                visit_id=self._to_uuid(row['visit_id']),
-                task_name=row['task_name'],
-                planned_start=row['planned_start'],
-                planned_end=row['planned_end'],
-                actual_start=row['actual_start'],
-                actual_end=row['actual_end'],
-                status=ChronogramStatus(row['status']),
-                dependencies=[self._to_uuid(d) for d in (row['dependencies'] or [])],
-                created_at=row['created_at'],
-                updated_at=row['updated_at']
-            )
-            for row in results
-        ]
 
     def update_progress(self, entry_id: uuid.UUID,
                        actual_start: Optional[datetime] = None,
                        actual_end: Optional[datetime] = None,
                        status: Optional[ChronogramStatus] = None) -> ChronogramEntry:
+        """Update progress of chronogram entry."""
         query = """
         UPDATE chronogram_entries 
         SET actual_start = COALESCE(%s, actual_start),
@@ -327,11 +330,27 @@ class ChronogramRepository(BaseRepository):
         RETURNING *
         """
         result = self._execute_query(query, (
-            actual_start, actual_end,
+            actual_start,
+            actual_end,
             status.value if status else None,
             str(entry_id)
         ))
+        
+        if not result:
+            raise ValueError("Chronogram entry not found")
+            
         row = result[0]
+        
+        # Handle dependencies safely
+        dep_list = []
+        if row['dependencies']:
+            for dep in row['dependencies']:
+                try:
+                    if dep and str(dep).strip():
+                        dep_list.append(self._to_uuid(dep))
+                except (ValueError, AttributeError):
+                    continue
+        
         return ChronogramEntry(
             id=self._to_uuid(row['id']),
             visit_id=self._to_uuid(row['visit_id']),
@@ -341,10 +360,43 @@ class ChronogramRepository(BaseRepository):
             actual_start=row['actual_start'],
             actual_end=row['actual_end'],
             status=ChronogramStatus(row['status']),
-            dependencies=[self._to_uuid(d) for d in (row['dependencies'] or [])],
+            dependencies=dep_list,
             created_at=row['created_at'],
             updated_at=row['updated_at']
         )
+
+    def get_by_visit(self, visit_id: uuid.UUID) -> List[ChronogramEntry]:
+        """Get all chronogram entries for a visit."""
+        query = "SELECT * FROM chronogram_entries WHERE visit_id = %s ORDER BY planned_start"
+        results = self._execute_query(query, (str(visit_id),))
+        
+        entries = []
+        for row in results or []:
+            # Handle dependencies safely
+            dep_list = []
+            if row['dependencies']:
+                for dep in row['dependencies']:
+                    try:
+                        if dep and str(dep).strip():
+                            dep_list.append(self._to_uuid(dep))
+                    except (ValueError, AttributeError):
+                        continue
+            
+            entries.append(ChronogramEntry(
+                id=self._to_uuid(row['id']),
+                visit_id=self._to_uuid(row['visit_id']),
+                task_name=row['task_name'],
+                planned_start=row['planned_start'],
+                planned_end=row['planned_end'],
+                actual_start=row['actual_start'],
+                actual_end=row['actual_end'],
+                status=ChronogramStatus(row['status']),
+                dependencies=dep_list,
+                created_at=row['created_at'],
+                updated_at=row['updated_at']
+            ))
+            
+        return entries
 
 class ChecklistTemplateRepository(BaseRepository):
     def create(self, name: str, items: List[Dict[str, Any]], description: Optional[str] = None) -> ChecklistTemplate:

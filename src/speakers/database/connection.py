@@ -24,9 +24,11 @@ class DatabaseConnection:
         self.logger.setLevel(logging.WARNING)
 
         self.instance_connection_name = os.getenv('INSTANCE_CONNECTION_NAME')
+        self.db_host = os.getenv('DB_HOST', 'localhost')
+        self.db_port = os.getenv('DB_PORT', '5432')
+        self.db_name = os.getenv('DB_NAME', 'postgres')
         self.db_user = os.getenv('DB_USER', 'postgres')
-        self.db_pass = os.getenv('DB_PASSWORD')
-        self.db_name = os.getenv('DB_NAME', 'MeetingAssistant')
+        self.db_password = os.getenv('DB_PASSWORD', '')
         
     def get_connection(self):
         try:
@@ -38,13 +40,16 @@ class DatabaseConnection:
                 
             
             conn = psycopg2.connect(
+                host=self.db_host,
+                port=self.db_port,
                 dbname=self.db_name,
                 user=self.db_user,
-                password=self.db_pass,
-                host=host
-            )
-            #print("Database connection successful")
+                password=self.db_password
+                )
+
             return conn
+            #print("Database connection successful")
+
             
         except Exception as e:
             print(f"Database connection error: {str(e)}")

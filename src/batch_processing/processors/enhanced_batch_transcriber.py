@@ -17,6 +17,7 @@ from src.batch_processing.exceptions import BatchProcessingError, FileProcessing
 from src.historical_data.services.visit_history import VisitHistoryService
 from src.historical_data.database.location_repository import LocationRepository
 from src.batch_processing.formatters.enhanced_formatter import EnhancedReportFormatter
+from src.historical_data.models.models import Location
 
 from enum import Enum
 
@@ -69,6 +70,7 @@ def convert_sets_to_lists(data):
     else:
         return data
     
+
 class EnhancedBatchTranscriber:
     """Enhanced batch transcriber that integrates construction and timing analysis."""
     
@@ -91,6 +93,11 @@ class EnhancedBatchTranscriber:
         # Initialize report formatter
         self.report_formatter = EnhancedReportFormatter()
 
+    def _validate_uuid_or_str(self, value: Any) -> str:
+        """Safely convert UUID or string to string."""
+        if isinstance(value, uuid.UUID):
+            return str(value)
+        return str(value) if value is not None else None
 
     def create_session(
         self, 
@@ -136,13 +143,17 @@ class EnhancedBatchTranscriber:
         # Sort files by creation time
         audio_files.sort(key=lambda x: x.creation_time)
         
+        # Ensure location is a string
+        location_str = self._validate_uuid_or_str(location) or "Default Construction Site"
+
         return AudioSession(
             session_id=datetime.now().strftime("%Y%m%d_%H%M%S"),
             start_time=audio_files[0].creation_time,
             files=audio_files,
-            location=location or "Default Construction Site",
+            location=location_str,
             notes=notes
         )
+
 
     async def process_session(self, session: AudioSession) -> Dict[str, Any]:
         try:
@@ -150,12 +161,13 @@ class EnhancedBatchTranscriber:
             output_dir = Path("reports") / session.session_id
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Get location - ensure we're passing a string
-            location_name = session.location if isinstance(session.location, str) else str(session.location) if session.location else None
+            # Get location using unified handler
+            location_name = self._validate_uuid_or_str(session.location)
             location = self._handle_location(location_name=location_name)
+            
             if not location:
                 raise ValueError("Failed to create or retrieve location")
-                
+                    
             location_id = location.id
 
             session_results = {
@@ -168,7 +180,7 @@ class EnhancedBatchTranscriber:
                     'total_files': len(session.files),
                     'total_duration': session.total_duration,
                     'notes': session.notes,
-                    'location_id': str(location_id)  # Convert UUID to string for JSON
+                    'location_id': str(location_id)  # Convert UUID to string
                 },
                 'output_dir': str(output_dir)
             }
@@ -298,23 +310,26 @@ class EnhancedBatchTranscriber:
         except Exception as e:
             self.logger.error(f"Error processing audio {audio_path}: {str(e)}")
             raise FileProcessingError(f"Failed to process {audio_path}: {str(e)}")
-
-
+            
     def _handle_location(self, 
-                        location_name: Optional[str] = None, 
-                        location_data: Optional[Dict] = None) -> Any:
+                            location_name: Optional[str] = None, 
+                            location_data: Optional[Dict] = None) -> Any:
         """
         Unified method to handle location creation/retrieval.
         """
         try:
-            # Add debug logging
-            self.logger.debug(f"Handling location with name: {location_name}, type: {type(location_name)}")
-            
-            # If location_name is UUID, convert it to string first
-            if isinstance(location_name, uuid.UUID):
-                location_name = str(location_name)
-            
-            # Case 1: We have location data from processor
+            # Case 1: Try to convert location_name to UUID and look up by ID first
+            if location_name is not None:
+                try:
+                    location_id = uuid.UUID(str(location_name))
+                    existing = self.location_repo.get(location_id)
+                    if existing:
+                        return existing
+                except ValueError:
+                    # Not a UUID, continue with normal flow
+                    pass
+
+            # Case 2: We have location data from processor
             if location_data and location_data.get('main_site'):
                 main_site = location_data['main_site']
                 company = getattr(main_site, 'company', None) or main_site.get('company', 'Unknown Company')
@@ -331,7 +346,7 @@ class EnhancedBatchTranscriber:
                     metadata={'company': company}
                 )
             
-            # Case 2: We have an explicit location name
+            # Case 3: We have an explicit location name
             if location_name is not None:
                 # Convert to string and clean
                 clean_name = str(location_name).strip()
@@ -349,7 +364,7 @@ class EnhancedBatchTranscriber:
                     metadata={'created_at': datetime.now().isoformat()}
                 )
             
-            # Case 3: Fallback - create default location
+            # Case 4: Fallback - create default location
             default_name = "Default Construction Site"
             self.logger.debug("Using fallback location")
             existing = self.location_repo.get_by_name(default_name)
@@ -369,6 +384,7 @@ class EnhancedBatchTranscriber:
             if location_data:
                 self.logger.error(f"Location data: {location_data}")
             raise
+                
     """
     def create_session(
         self, 
