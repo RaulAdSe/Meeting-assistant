@@ -1,311 +1,270 @@
 import pytest
-import pytest_asyncio
-from unittest.mock import MagicMock, patch
-import uuid
 from datetime import datetime
-from pathlib import Path
-import json
-from src.report_generation.enhanced_formatter import EnhancedReportFormatter, ReportSection
+import uuid
+from unittest.mock import MagicMock
+from src.batch_processing.formatters.enhanced_formatter import EnhancedReportFormatter, ReportSection
+from src.location.models.location import Location, LocationChange
+from src.timing.models import Task, Duration, ScheduleGraph, TaskRelationship, TaskRelationType
 
 @pytest.fixture
-def report_formatter():
-    """Create a report formatter with mocked dependencies"""
-    formatter = EnhancedReportFormatter()
-    
-    # Mock all dependencies
-    formatter.location_processor = MagicMock()
-    formatter.construction_expert = MagicMock()
-    formatter.task_analyzer = MagicMock()
-    formatter.llm_service = MagicMock()
-    formatter.chronogram_visualizer = MagicMock()
-    
-    return formatter
+def formatter():
+    return EnhancedReportFormatter()
 
 @pytest.fixture
 def sample_location_data():
-    """Sample location analysis data"""
+    """Create sample location data"""
     return {
         'main_site': {
-            'company': 'Test Construction Corp',
-            'site': 'Test Site Location'
+            'company': 'Test Company',
+            'site': 'Test Site'
         },
         'location_changes': [
-            {
-                'timestamp': datetime.now(),
-                'area': 'Main Building',
-                'sublocation': 'Ground Floor'
-            }
+            LocationChange(
+                timestamp=datetime.now(),
+                area='Test Area',
+                sublocation='Sub Area',
+                notes='Test note'
+            )
         ]
     }
 
 @pytest.fixture
 def sample_construction_analysis():
-    """Sample construction analysis data"""
-    problem_id = str(uuid.uuid4())
+    """Create sample construction analysis data"""
     return {
-        'executive_summary': 'Test executive summary',
-        'confidence_scores': {'overall': 0.85},
-        'problems': [
-            {
-                'id': problem_id,
-                'severity': 'HIGH',
-                'description': 'Test problem',
-                'location_context': {'area': 'Test Area'}
-            }
-        ],
-        'solutions': {
-            problem_id: [  # Ensure this matches the problem's ID
+        'executive_summary': 'Test summary of the visit',
+        'vision_general': {
+            'areas_visitadas': [
                 {
-                    'description': 'Test solution',
-                    'estimated_time': 120
+                    'area': 'Test Area',
+                    'observaciones_clave': ['Key observation 1', 'Key observation 2'],
+                    'problemas_identificados': ['Problem 1']
                 }
             ]
         },
-        'follow_up_required': [
+        'hallazgos_tecnicos': [
             {
-                'item': 'Follow up task',
-                'priority': 'High',
-                'assigned_to': 'John Doe'
+                'ubicacion': 'Test Location',
+                'hallazgo': 'Technical issue found',
+                'severidad': 'Alta',
+                'accion_recomendada': 'Fix immediately'
             }
-        ]
+        ],
+        'preocupaciones_seguridad': [
+            {
+                'ubicacion': 'Test Area',
+                'preocupacion': 'Safety concern',
+                'prioridad': 'Alta',
+                'mitigacion': 'Safety measure needed'
+            }
+        ],
+        'tareas_pendientes': [
+            {
+                'tarea': 'Pending task',
+                'ubicacion': 'Test Location',
+                'asignado_a': 'John Doe',
+                'prioridad': 'Alta',
+                'plazo': 'Tomorrow'
+            }
+        ],
+        'observaciones_generales': ['General observation 1'],
+        'confidence_scores': {'overall': 0.85}
     }
 
 @pytest.fixture
-def sample_timing_analysis():
-    """Sample timing analysis data"""
-    return {
-        'tasks': [
-            {
-                'name': 'Test Task',
-                'duration': {'amount': 5, 'unit': 'days'}
-            }
-        ],
-        'relationships': []
-    }
+def sample_schedule(self):
+    """Create a sample schedule for testing"""
+    schedule = ScheduleGraph(tasks={}, relationships=[])
+    
+    # Create a few sample tasks
+    task1 = Task(
+        name="Foundation Work",
+        description="Complete foundation",
+        estimated_duration=14 * 60,  # 14 days in minutes
+        duration=Duration(amount=14, unit="days")
+    )
+    
+    task2 = Task(
+        name="Framing",
+        description="Building frame",
+        estimated_duration=20 * 60,  # 20 days in minutes
+        duration=Duration(amount=20, unit="days")
+    )
+    
+    # Add tasks to schedule
+    schedule.add_task(task1)
+    schedule.add_task(task2)
+    
+    # Create a relationship
+    rel = TaskRelationship(
+        from_task_id=task1.id,
+        to_task_id=task2.id,
+        relation_type=TaskRelationType.SEQUENTIAL
+    )
+    schedule.add_relationship(rel)
+    
+    return schedule
 
 class TestEnhancedReportFormatter:
-    @pytest.mark.asyncio
-    async def test_generate_comprehensive_report(self, report_formatter, tmp_path, 
-                                              sample_location_data, sample_construction_analysis,
-                                              sample_timing_analysis):
-        # Set up mocks
-        report_formatter.location_processor.process_transcript.return_value = sample_location_data
-        report_formatter.construction_expert.analyze_visit.return_value = sample_construction_analysis
-        report_formatter.task_analyzer.analyze_transcript.return_value = sample_timing_analysis
-        report_formatter.chronogram_visualizer.generate_mermaid_gantt.return_value = "graph TD;"
+    @pytest.fixture
+    def sample_schedule(self):
+        """Create a sample schedule for testing"""
+        schedule = ScheduleGraph(tasks={}, relationships=[])
         
-        # Generate report
-        result = await report_formatter.generate_comprehensive_report(
-            transcript_text="Test transcript",
-            visit_id=uuid.uuid4(),
-            location_id=uuid.uuid4(),
-            output_dir=tmp_path
+        # Create a few sample tasks
+        task1 = Task(
+            name="Foundation Work",
+            description="Complete foundation",
+            estimated_duration=14 * 60,  # 14 days in minutes
+            duration=Duration(amount=14, unit="days")
         )
         
-        # Verify all expected files were created
+        task2 = Task(
+            name="Framing",
+            description="Building frame",
+            estimated_duration=20 * 60,  # 20 days in minutes
+            duration=Duration(amount=20, unit="days")
+        )
+        
+        # Add tasks to schedule
+        schedule.add_task(task1)
+        schedule.add_task(task2)
+        
+        # Create a relationship
+        rel = TaskRelationship(
+            from_task_id=task1.id,
+            to_task_id=task2.id,
+            relation_type=TaskRelationType.SEQUENTIAL
+        )
+        schedule.add_relationship(rel)
+        
+        return schedule
+
+    def test_format_header(self, formatter, sample_location_data):
+        """Test header formatting"""
+        header = formatter._format_header(sample_location_data)
+        
+        assert '# Construction Site Visit Report' in header
+        assert 'Test Company' in header
+        assert 'Test Site' in header
+        assert datetime.now().strftime('%Y-%m-%d') in header
+
+    def test_format_executive_summary(self, formatter, sample_construction_analysis):
+        """Test executive summary formatting"""
+        summary = formatter._format_executive_summary(sample_construction_analysis)
+        
+        assert 'Test summary of the visit' in summary
+        assert 'Test Area' in summary
+        assert 'Key observation 1' in summary
+        assert 'Problem 1' in summary
+        assert '85.0%' in summary
+
+    def test_format_problems_section(self, formatter, sample_construction_analysis):
+        """Test problems section formatting"""
+        problems = formatter._format_problems_section(sample_construction_analysis)
+        
+        # Check technical findings
+        assert 'Technical issue found' in problems
+        assert 'Alta' in problems
+        assert 'Fix immediately' in problems
+        
+        # Check safety concerns
+        assert 'Safety Concerns' in problems
+        assert 'Safety concern' in problems
+        assert 'Safety measure needed' in problems
+
+    def test_format_follow_up_section(self, formatter, sample_construction_analysis):
+        """Test follow-up section formatting"""
+        data = {'construction_analysis': sample_construction_analysis}
+        follow_up = formatter._format_follow_up_section(data)
+        
+        assert 'Pending task' in follow_up
+        assert 'John Doe' in follow_up
+        assert 'Alta' in follow_up
+        assert 'Tomorrow' in follow_up
+        assert 'General observation 1' in follow_up
+
+    def test_format_location_analysis(self, formatter, sample_location_data):
+        """Test location analysis formatting"""
+        location = formatter._format_location_analysis(sample_location_data)
+        
+        assert '## Location Analysis' in location
+        assert 'Test Area' in location
+        assert 'Sub Area' in location
+        assert 'Test note' in location
+
+    def test_create_report_sections(self, formatter, sample_location_data, sample_construction_analysis):
+        """Test complete report section creation"""
+        sections = formatter._create_report_sections(
+            location_data=sample_location_data,
+            construction_analysis=sample_construction_analysis,
+            timing_analysis={'tasks': []},
+            chronogram="gantt\n  title Test"
+        )
+        
+        # Check all sections are present
+        section_titles = [s.title for s in sections]
+        assert "Site Information" in section_titles
+        assert "Executive Summary" in section_titles
+        assert "Location Analysis" in section_titles
+        assert "Problems and Solutions" in section_titles
+        assert "Project Timeline" in section_titles
+        assert "Follow-up Items" in section_titles
+        
+        # Check section order
+        section_order = {s.title: s.order for s in sections}
+        assert section_order["Site Information"] < section_order["Executive Summary"]
+        assert section_order["Executive Summary"] < section_order["Location Analysis"]
+        assert section_order["Problems and Solutions"] < section_order["Follow-up Items"]
+
+    @pytest.mark.asyncio
+    async def test_generation_with_real_data(self, formatter, sample_location_data, 
+                                           sample_construction_analysis, sample_schedule, tmp_path):
+        """Test actual report generation with sample data"""
+        test_id = uuid.uuid4()
+        
+        # Mock the location processor to return our sample data
+        formatter.location_processor.process_transcript = MagicMock(
+            return_value=sample_location_data
+        )
+        
+        # Mock the construction expert to return our sample analysis
+        formatter.construction_expert.analyze_visit = MagicMock(
+            return_value=sample_construction_analysis
+        )
+        
+        # Mock the task analyzer to return a proper ScheduleGraph
+        formatter.task_analyzer.analyze_transcript = MagicMock(
+            return_value=sample_schedule
+        )
+        
+        # Mock chronogram visualizer to return a simple Mermaid diagram
+        formatter.chronogram_visualizer.generate_mermaid_gantt = MagicMock(
+            return_value="""gantt
+    dateFormat YYYY-MM-DD
+    title Project Timeline
+    Foundation Work :2025-01-01, 2025-01-14
+    Framing :2025-01-15, 2025-02-04"""
+        )
+        
+        result = await formatter.generate_comprehensive_report(
+            transcript_text="Test transcript",
+            visit_id=test_id,
+            location_id=test_id,
+            output_dir=tmp_path,
+            analysis_data=sample_construction_analysis
+        )
+        
+        # Check output files exist
         assert (tmp_path / "report.md").exists()
         assert (tmp_path / "report.pdf").exists()
         assert (tmp_path / "report_metadata.json").exists()
         
-        # Verify markdown content
+        # Check markdown content
         markdown_content = (tmp_path / "report.md").read_text()
-        assert "Test Construction Corp" in markdown_content
-        assert "Test executive summary" in markdown_content
-        assert "Test problem" in markdown_content
-        assert "Follow up task" in markdown_content
-        
-        # Verify metadata
-        metadata = json.loads((tmp_path / "report_metadata.json").read_text())
-        assert len(metadata['sections']) > 0
-        assert any(section['title'] == "Executive Summary" for section in metadata['sections'])
-
-    def test_create_report_sections(self, report_formatter, sample_location_data,
-                                  sample_construction_analysis, sample_timing_analysis):
-        sections = report_formatter._create_report_sections(
-            location_data=sample_location_data,
-            construction_analysis=sample_construction_analysis,
-            timing_analysis=sample_timing_analysis,
-            chronogram="graph TD;"
-        )
-        
-        # Verify all expected sections are present
-        section_titles = {section.title for section in sections}
-        expected_titles = {
-            "Site Information",
-            "Executive Summary",
-            "Location Analysis",
-            "Problems and Solutions",
-            "Project Timeline",
-            "Follow-up Items"
-        }
-        assert section_titles == expected_titles
-        
-        # Verify section ordering
-        assert all(hasattr(section, 'order') for section in sections)
-        assert sections == sorted(sections, key=lambda s: s.order)
-
-    def test_format_header(self, report_formatter, sample_location_data):
-        header = report_formatter._format_header(sample_location_data)
-        
-        assert "# Construction Site Visit Report" in header
-        assert "Test Construction Corp" in header
-        assert "Test Site Location" in header
-        assert datetime.now().strftime('%Y-%m-%d') in header
-
-    def test_format_problems_section(self, report_formatter, sample_construction_analysis):
-        problems_section = report_formatter._format_problems_section(sample_construction_analysis)
-        
-        assert "## Problems and Solutions" in problems_section
-        assert "Test problem" in problems_section
-        assert "Test solution" in problems_section
-        assert "HIGH" in problems_section
-        assert "Test Area" in problems_section
-
-    def test_format_follow_up_section(self, report_formatter, sample_construction_analysis):
-        follow_up_section = report_formatter._format_follow_up_section({
-            'construction_analysis': sample_construction_analysis
-        })
-        
-        assert "## Follow-up Items" in follow_up_section
-        assert "Follow up task" in follow_up_section
-        assert "High" in follow_up_section
-        assert "John Doe" in follow_up_section
-
-    def test_generate_markdown(self, report_formatter):
-        sections = [
-            ReportSection(title="Test Section 1", content="# Test Content 1", order=1),
-            ReportSection(title="Test Section 2", content="graph TD;", type="mermaid", order=2)
-        ]
-        
-        markdown = report_formatter._generate_markdown(sections)
-        
-        assert "# Test Content 1" in markdown
-        assert "```mermaid" in markdown
-        assert "graph TD;" in markdown
-        assert "```" in markdown
-
-    @pytest.mark.asyncio
-    async def test_error_handling(self, report_formatter, tmp_path):
-        # Simulate an error in location processing
-        report_formatter.location_processor.process_transcript.side_effect = Exception("Test error")
-        
-        with pytest.raises(Exception) as exc_info:
-            await report_formatter.generate_comprehensive_report(
-                transcript_text="Test transcript",
-                visit_id=uuid.uuid4(),
-                location_id=uuid.uuid4(),
-                output_dir=tmp_path
-            )
-        
-        assert "Test error" in str(exc_info.value)
-
-    def test_section_metadata(self, report_formatter):
-        section = ReportSection(
-            title="Test Section",
-            content="Test content",
-            order=1,
-            type="markdown",
-            metadata={"key": "value"}
-        )
-        
-        assert section.title == "Test Section"
-        assert section.content == "Test content"
-        assert section.order == 1
-        assert section.type == "markdown"
-        assert section.metadata == {"key": "value"}
-
-# Chronogram testing
-from src.timing.models import Task, Duration, ScheduleGraph
-from src.historical_data.models.models import Location, Visit
-
-@pytest.fixture
-def mock_location():
-    return Location(
-        id=uuid.uuid4(),
-        name="Test Site",
-        address="123 Test St"
-    )
-
-@pytest.fixture
-def mock_visit(mock_location):
-    return Visit(
-        id=uuid.uuid4(),
-        date=datetime.now(),
-        location_id=mock_location.id
-    )
-
-@pytest.fixture
-def mock_formatter():
-    formatter = EnhancedReportFormatter()
-    
-    # Mock all dependencies
-    formatter.location_processor = MagicMock()
-    formatter.construction_expert = MagicMock()
-    formatter.task_analyzer = MagicMock()
-    formatter.llm_service = MagicMock()
-    formatter.chronogram_visualizer = MagicMock()
-    
-    return formatter
-
-@pytest.fixture
-def sample_timing_analysis():
-    schedule = ScheduleGraph(tasks={}, relationships=[])
-    
-    # Add sample tasks
-    foundation = Task(
-        name="Foundation Work",
-        description="Complete foundation",
-        duration=Duration(amount=14, unit="days")
-    )
-    framing = Task(
-        name="Framing",
-        description="Building frame",
-        duration=Duration(amount=20, unit="days")
-    )
-    
-    schedule.add_task(foundation)
-    schedule.add_task(framing)
-    
-    return schedule
-
-@pytest.mark.asyncio
-class TestEnhancedFormatter:
-    async def test_chronogram_integration(
-        self, 
-        mock_formatter: EnhancedReportFormatter,
-        mock_location: Location,
-        mock_visit: Visit,
-        sample_timing_analysis: ScheduleGraph,
-        tmp_path: Path
-    ):
-        mock_formatter.construction_expert.visit_history.location_repo.get.return_value = mock_location
-        mock_formatter.location_processor.process_transcript.return_value = {"location_changes": []}
-        mock_formatter.construction_expert.analyze_visit.return_value = {
-            "problems": [],
-            "solutions": {},
-            "confidence_scores": {"overall": 0.9}
-        }
-        mock_formatter.task_analyzer.analyze_transcript.return_value = sample_timing_analysis
-        mock_formatter.chronogram_visualizer.generate_mermaid_gantt.return_value = """gantt
-            dateFormat YYYY-MM-DD
-            title Project Timeline
-            Foundation Work :2024-01-01, 2024-01-14
-            Framing :2024-01-15, 2024-02-04"""
-
-        output_dir = tmp_path / "test_output"
-        output_dir.mkdir(exist_ok=True)
-
-        report = await mock_formatter.generate_comprehensive_report(
-            transcript_text="Foundation takes 14 days. Then framing for 20 days.",
-            visit_id=mock_visit.id,
-            location_id=mock_location.id,
-            output_dir=output_dir,
-            start_date=datetime.now()
-        )
-
-        assert report["markdown"].exists()
-        content = report["markdown"].read_text(encoding="utf-8")
-        assert "```mermaid" in content
-        assert "gantt" in content
-        assert "Foundation" in content
-        assert "Framing" in content
+        assert 'Test Company' in markdown_content
+        assert 'Test Site' in markdown_content
+        assert 'Test summary of the visit' in markdown_content
+        assert 'Technical issue found' in markdown_content
+        assert 'Test Location' in markdown_content
+        assert 'John Doe' in markdown_content

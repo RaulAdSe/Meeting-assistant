@@ -35,6 +35,202 @@ class EnhancedReportFormatter:
         self.llm_service = LLMService()
         self.chronogram_visualizer = ChronogramVisualizer()
 
+    def _format_header(self, location_data: Dict) -> str:
+        """Format the report header with site information"""
+        try:
+            # Get main_site data
+            main_site = location_data.get('main_site')
+            if not main_site:
+                self.logger.warning("No main_site data found")
+                company = "Unknown Company"
+                site = "Unknown Site"
+            else:
+                # Handle both object and dictionary formats
+                if hasattr(main_site, 'company'):
+                    company = main_site.company
+                    site = main_site.site
+                else:
+                    company = main_site.get('company', 'Unknown Company')
+                    site = main_site.get('site', 'Unknown Site')
+
+            # Format the header
+            return f"""# Construction Site Visit Report
+
+    ## Site Information
+    - **Company:** {company}
+    - **Location:** {site}
+    - **Date:** {datetime.now().strftime('%Y-%m-%d %H:%M')}
+
+    ---
+    """
+        except Exception as e:
+            self.logger.error(f"Error formatting header: {str(e)}")
+            # Return a default header rather than failing
+            return f"""# Construction Site Visit Report
+
+    ## Site Information
+    - **Company:** Error retrieving company
+    - **Location:** Error retrieving location
+    - **Date:** {datetime.now().strftime('%Y-%m-%d %H:%M')}
+
+    ---
+    """
+
+    def _format_executive_summary(self, analysis: Dict) -> str:
+        """Format the executive summary section with proper structure"""
+        summary = analysis.get('executive_summary', 'No summary available.')
+        vision_general = analysis.get('vision_general', {})
+        
+        # Format areas visited
+        areas_section = []
+        for area in vision_general.get('areas_visitadas', []):
+            areas_section.append(f"\n#### {area['area']}")
+            
+            if area.get('observaciones_clave'):
+                areas_section.append("**Key Observations:**")
+                for obs in area['observaciones_clave']:
+                    areas_section.append(f"- {obs}")
+                    
+            if area.get('problemas_identificados'):
+                areas_section.append("\n**Identified Problems:**")
+                for prob in area['problemas_identificados']:
+                    areas_section.append(f"- {prob}")
+            
+            areas_section.append("")
+
+        return f"""## Executive Summary
+
+{summary}
+
+### Areas Visited
+{''.join(areas_section)}
+
+**Analysis Confidence:** {analysis.get('confidence_scores', {}).get('overall', 0.6):.1%}
+
+---"""
+    
+    def _format_problems_section(self, analysis: Dict) -> str:
+        """Format the problems and solutions section"""
+        sections = ["## Problems and Solutions\n"]
+        
+        # Process technical findings
+        for finding in analysis.get('hallazgos_tecnicos', []):
+            sections.append(f"### Problem in {finding['ubicacion']}")
+            sections.append(f"**Severity:** {finding['severidad']}")
+            sections.append(f"**Description:** {finding['hallazgo']}")
+            sections.append(f"**Recommended Action:** {finding['accion_recomendada']}\n")
+        
+        # Process safety concerns
+        if analysis.get('preocupaciones_seguridad'):
+            sections.append("### Safety Concerns")
+            for concern in analysis['preocupaciones_seguridad']:
+                sections.append(f"**Location:** {concern['ubicacion']}")
+                sections.append(f"**Concern:** {concern['preocupacion']}")
+                sections.append(f"**Priority:** {concern['prioridad']}")
+                sections.append(f"**Mitigation:** {concern['mitigacion']}\n")
+        
+        return "\n".join(sections)
+    
+    def _format_follow_up_section(self, data: Dict) -> str:
+        """Format the follow-up items section"""
+        sections = ["## Follow-up Items\n"]
+        
+        # Get tasks from analysis
+        analysis = data.get('construction_analysis', {})
+        for item in analysis.get('tareas_pendientes', []):
+            sections.append(f"### {item['tarea']}")
+            sections.append(f"- **Location:** {item['ubicacion']}")
+            sections.append(f"- **Assigned to:** {item['asignado_a']}")
+            sections.append(f"- **Priority:** {item['prioridad']}")
+            sections.append(f"- **Deadline:** {item['plazo']}\n")
+        
+        # Add general observations
+        if analysis.get('observaciones_generales'):
+            sections.append("### General Observations")
+            for obs in analysis['observaciones_generales']:
+                sections.append(f"- {obs}")
+        
+        return "\n".join(sections)
+
+    def _format_location_analysis(self, location_data: Dict) -> str:
+        """Format the location analysis section"""
+        sections = ["## Location Analysis\n"]
+
+        # Add movement tracking
+        if location_data.get('location_changes'):
+            sections.append("### Movement Timeline")
+            for change in location_data['location_changes']:
+                # Handle both dictionary and object formats
+                if hasattr(change, 'timestamp'):
+                    time = change.timestamp.strftime('%H:%M:%S')
+                    area = change.area
+                    subloc = getattr(change, 'sublocation', '')
+                    notes = getattr(change, 'notes', '')
+                else:
+                    time = change.get('timestamp', datetime.now()).strftime('%H:%M:%S')
+                    area = change.get('area', 'Unknown Area')
+                    subloc = change.get('sublocation', '')
+                    notes = change.get('notes', '')
+                
+                # Format location entry
+                location_str = f"- **{time}** - {area}"
+                if subloc:
+                    location_str += f" ({subloc})"
+                if notes:
+                    location_str += f" - {notes}"
+                sections.append(location_str)
+        
+        return "\n".join(sections)
+
+    def _create_report_sections(self, **data) -> List[ReportSection]:
+        """Create all report sections from analyzed data"""
+        sections = []
+        
+        # Header section
+        sections.append(ReportSection(
+            title="Site Information",
+            content=self._format_header(data['location_data']),
+            order=1
+        ))
+        
+        # Executive summary
+        sections.append(ReportSection(
+            title="Executive Summary",
+            content=self._format_executive_summary(data['construction_analysis']),
+            order=2
+        ))
+        
+        # Location analysis
+        sections.append(ReportSection(
+            title="Location Analysis",
+            content=self._format_location_analysis(data['location_data']),
+            order=3
+        ))
+        
+        # Problems and solutions
+        sections.append(ReportSection(
+            title="Problems and Solutions",
+            content=self._format_problems_section(data['construction_analysis']),
+            order=4
+        ))
+        
+        # Chronogram
+        sections.append(ReportSection(
+            title="Project Timeline",
+            content=data['chronogram'],
+            type="mermaid",
+            order=5
+        ))
+        
+        # Follow-up items
+        sections.append(ReportSection(
+            title="Follow-up Items",
+            content=self._format_follow_up_section(data),
+            order=6
+        ))
+        
+        return sorted(sections, key=lambda s: s.order)
+    
     async def generate_comprehensive_report(
         self,
         transcript_text: str,
@@ -131,266 +327,6 @@ class EnhancedReportFormatter:
         except Exception as e:
             self.logger.error(f"Error generating report: {str(e)}")
             raise
-
-    def _create_report_sections(self, **data) -> List[ReportSection]:
-        """Create all report sections from analyzed data"""
-        sections = []
-        
-        # Header section
-        sections.append(ReportSection(
-            title="Site Information",
-            content=self._format_header(data['location_data']),
-            order=1
-        ))
-        
-        # Executive summary
-        sections.append(ReportSection(
-            title="Executive Summary",
-            content=self._format_executive_summary(data['construction_analysis']),
-            order=2
-        ))
-        
-        # Location analysis
-        sections.append(ReportSection(
-            title="Location Analysis",
-            content=self._format_location_analysis(data['location_data']),
-            order=3
-        ))
-        
-        # Problems and solutions
-        sections.append(ReportSection(
-            title="Problems and Solutions",
-            content=self._format_problems_section(data['construction_analysis']),
-            order=4
-        ))
-        
-        # Chronogram
-        sections.append(ReportSection(
-            title="Project Timeline",
-            content=data['chronogram'],
-            type="mermaid",
-            order=5
-        ))
-        
-        # Follow-up items
-        sections.append(ReportSection(
-            title="Follow-up Items",
-            content=self._format_follow_up_section(data),
-            order=6
-        ))
-        
-        return sorted(sections, key=lambda s: s.order)
-
-    def _format_header(self, location_data: Dict) -> str:
-        """Format the report header with site information"""
-        main_site = location_data.get('main_site', None)
-        
-        # Ensure main_site is not None and is a Location object
-        if main_site is not None:
-            # Access attributes directly
-            company = getattr(main_site, 'company', 'Unknown Company')
-            site = getattr(main_site, 'site', 'Unknown Site')
-        else:
-            company = 'Unknown Company'
-            site = 'Unknown Site'
-    
-        
-        return f"""# Construction Site Visit Report
-
-## Site Information
-- **Company:** {company}
-- **Location:** {site}
-- **Date:** {datetime.now().strftime('%Y-%m-%d %H:%M')}
-
----
-"""
-    
-
-    def _format_executive_summary(self, analysis: Dict) -> str:
-        """Format executive summary with proper structure"""
-        summary = analysis.get('executive_summary', 'No summary available.')
-        observations = self._format_observations(analysis.get('vision_general', {}))
-        confidence = analysis.get('confidence_scores', {}).get('overall', 0)
-        
-        return f"""## Executive Summary
-
-    {summary}
-
-    ### Key Observations:
-    {observations}
-
-    **Analysis Confidence:** {confidence:.1%}
-
-    ---"""
-
-    def _format_location_analysis(self, location_data: Dict) -> str:
-        """Format the location analysis section"""
-        sections = ["## Location Analysis\n"]
-
-        # Add movement tracking
-        if location_data.get('location_changes'):
-            sections.append("### Movement Timeline")
-            for change in location_data['location_changes']:
-                # Access attributes directly
-                time = change.timestamp.strftime('%H:%M:%S') if change.timestamp else 'Unknown Time'
-                area = change.area or 'Unknown Area'
-                sublocation = change.sublocation or 'Unknown Sublocation'
-                notes = change.notes or 'No notes'
-
-                sections.append(f"- {time}: {area} ({sublocation}) - {notes}")
-
-        return "\n".join(sections)
-
-    def _format_problems_section(self, construction_analysis: Dict) -> str:
-        """Format the problems and solutions section"""
-        sections = ["## Problems and Solutions\n"]
-        
-        for problem in construction_analysis.get('problems', []):
-            # Handle both dictionary and object formats
-            if isinstance(problem, dict):
-                severity = problem.get('severity', 'Unknown')
-                description = problem.get('description', 'No description available')
-                location_context = problem.get('location_context', {})
-                location = location_context.get('area', 'Unknown Area')
-                problem_id = problem.get('id')
-            else:
-                severity = problem.severity
-                description = problem.description
-                location = getattr(problem.location_context, 'area', 'Unknown Area')
-                problem_id = problem.id
-            
-            sections.append(f"### Problem in {location}")
-            sections.append(f"**Severity:** {severity}")
-            sections.append(f"**Description:** {description}\n")
-            
-            # Add solutions if available
-            solutions = construction_analysis.get('solutions', {}).get(str(problem_id), [])
-            if solutions:
-                sections.append("#### Proposed Solutions:")
-                for solution in solutions:
-                    # Handle both dictionary and object formats
-                    if isinstance(solution, dict):
-                        solution_desc = solution.get('description', 'No description')
-                        est_time = solution.get('estimated_time')
-                    else:
-                        solution_desc = solution.description
-                        est_time = solution.estimated_time
-                    
-                    sections.append(f"- {solution_desc}")
-                    if est_time:
-                        sections.append(f"  - Estimated time: {est_time} minutes")
-            sections.append("")
-            
-        return "\n".join(sections)
-
-    def _format_follow_up_section(self, data: Dict) -> str:
-        """Format the follow-up items section"""
-        sections = ["## Follow-up Items\n"]
-        
-        # Get follow-up items from construction analysis
-        construction = data.get('construction_analysis', {})
-        for item in construction.get('follow_up_required', []):
-            priority = item.get('priority', 'Normal')
-            description = item.get('item', 'No description')
-            assigned = item.get('assigned_to', 'Unassigned')
-            
-            sections.append(f"### {description}")
-            sections.append(f"- **Priority:** {priority}")
-            sections.append(f"- **Assigned to:** {assigned}\n")
-        
-        return "\n".join(sections)
-    
-    def _format_observations(self, vision_general: Dict) -> str:
-        """Format general observations and key findings from the visit analysis.
-        
-        Args:
-            vision_general: Dictionary containing general observations and visited areas
-            
-        Returns:
-            Formatted string with observations
-        """
-        sections = []
-        
-        # Add visited areas and their observations
-        if vision_general.get('areas_visitadas'):
-            for area in vision_general['areas_visitadas']:
-                sections.append(f"#### {area['area']}")
-                
-                # Add key observations
-                if area.get('observaciones_clave'):
-                    sections.append("**Key Observations:**")
-                    for obs in area['observaciones_clave']:
-                        sections.append(f"- {obs}")
-                
-                # Add identified problems
-                if area.get('problemas_identificados'):
-                    sections.append("\n**Issues Identified:**")
-                    for problem in area['problemas_identificados']:
-                        sections.append(f"- {problem}")
-                
-                sections.append("")  # Add spacing between areas
-        
-        # Add general observations if available
-        if vision_general.get('observaciones_generales'):
-            sections.append("#### General Observations")
-            for obs in vision_general['observaciones_generales']:
-                sections.append(f"- {obs}")
-        
-        # If no content was generated, provide a default message
-        if not sections:
-            return "No observations available."
-            
-        return "\n".join(sections)
-
-    def _format_executive_summary(self, analysis: Dict) -> str:
-        """Format executive summary with proper structure"""
-        return f"""## Executive Summary
-
-{analysis.get('resumen_ejecutivo', 'No summary available.')}
-
-### Key Observations:
-{self._format_observations(analysis.get('vision_general', {}))}
-
-**Analysis Confidence:** {analysis.get('confidence_scores', {}).get('overall', 0):.1%}
-
----"""
-        
-    def _format_severity(self, severity: str) -> str:
-        """Format severity levels with proper capitalization and translation."""
-        severity_map = {
-            'alta': 'High',
-            'Alta': 'High',
-            'media': 'Medium',
-            'Media': 'Medium',
-            'baja': 'Low',
-            'Baja': 'Low',
-            'crítica': 'Critical',
-            'Crítica': 'Critical'
-        }
-        return severity_map.get(severity, severity)
-
-    def _format_follow_up_section(self, analysis: Dict) -> str:
-        """Enhanced follow-up section with proper task organization"""
-        sections = ["## Follow-up Items\n"]
-        
-        if analysis.get('tareas_pendientes'):
-            # Group tasks by priority
-            tasks_by_priority = dict(list)
-            for task in analysis['tareas_pendientes']:
-                tasks_by_priority[task['prioridad']].append(task)
-
-            for priority in ['Alta', 'Media', 'Baja']:
-                if tasks_by_priority[priority]:
-                    sections.append(f"\n### {priority} Priority Tasks")
-                    for task in tasks_by_priority[priority]:
-                        sections.append(f"""
-- **Task:** {task['tarea']}
-  - Location: {task['ubicacion']}
-  - Assigned to: {task['asignado_a']}
-  - Deadline: {task['plazo']}
-""")
-
-        return "\n".join(sections)
 
     async def _generate_report_files(
         self,

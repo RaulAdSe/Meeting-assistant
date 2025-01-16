@@ -151,64 +151,60 @@ class ChronogramVisualizer:
         </html>
         """
 
-    def _calculate_task_dates(
-            self,
-            schedule: ScheduleGraph,
-            start_date: datetime
-        ) -> Dict[uuid.UUID, Dict[str, datetime]]:
-            """Calculate start and end dates for all tasks considering dependencies"""
-            task_dates = {}
-            task_order = self._get_topological_order(schedule)
+    def _calculate_task_dates(self, schedule: ScheduleGraph, start_date: datetime) -> Dict[uuid.UUID, Dict[str, datetime]]:
+        """Calculate start and end dates for all tasks considering dependencies"""
+        if not isinstance(schedule, ScheduleGraph):
+            raise TypeError(f"Expected ScheduleGraph object, got {type(schedule).__name__}")
+        
+        task_dates = {}
+        task_order = self._get_topological_order(schedule)
+        
+        # Define a small buffer between sequential tasks (e.g., 1 day)
+        TASK_BUFFER = timedelta(days=1)
+        
+        for task_id in task_order:
+            task = schedule.tasks[task_id]
             
-            # Define a small buffer between sequential tasks (e.g., 1 day)
-            TASK_BUFFER = timedelta(days=1)
+            # Initialize with project start date
+            task_start = start_date
             
-            for task_id in task_order:
-                task = schedule.tasks[task_id]
-                
-                # Initialize with project start date
-                task_start = start_date
-                
-                # Find all dependencies
-                dependencies = [
-                    rel for rel in schedule.relationships
-                    if rel.to_task_id == task_id
-                ]
-                
-                # Update start based on dependencies
-                if dependencies:
-                    dependency_ends = []
-                    for dep in dependencies:
-                        if dep.from_task_id not in task_dates:
-                            # If dependency not processed yet, schedule it first
-                            from_task = schedule.tasks[dep.from_task_id]
-                            task_dates[dep.from_task_id] = {
-                                'start': start_date,
-                                'end': start_date + timedelta(days=from_task.duration.to_days())
-                            }
-                        
-                        dep_end = task_dates[dep.from_task_id]['end']
-                        
-                        # Add delay if specified
-                        if dep.relation_type == TaskRelationType.DELAY and dep.delay:
-                            dep_end += timedelta(days=dep.delay.to_days())
-                        elif dep.relation_type == TaskRelationType.SEQUENTIAL:
-                            # Add buffer for sequential tasks
-                            dep_end += TASK_BUFFER
-                            
-                        dependency_ends.append(dep_end)
+            # Find all dependencies
+            dependencies = [rel for rel in schedule.relationships if rel.to_task_id == task_id]
+            
+            # Update start based on dependencies
+            if dependencies:
+                dependency_ends = []
+                for dep in dependencies:
+                    if dep.from_task_id not in task_dates:
+                        from_task = schedule.tasks[dep.from_task_id]
+                        task_dates[dep.from_task_id] = {
+                            'start': start_date,
+                            'end': start_date + timedelta(days=from_task.duration.to_days())
+                        }
                     
-                    # Start after latest dependency
-                    task_start = max(dependency_ends)
+                    dep_end = task_dates[dep.from_task_id]['end']
+                    
+                    # Add delay if specified
+                    if dep.relation_type == TaskRelationType.DELAY and dep.delay:
+                        dep_end += timedelta(days=dep.delay.to_days())
+                    elif dep.relation_type == TaskRelationType.SEQUENTIAL:
+                        # Add buffer for sequential tasks
+                        dep_end += TASK_BUFFER
+                        
+                    dependency_ends.append(dep_end)
                 
-                # Calculate end date
-                task_end = task_start + timedelta(days=task.duration.to_days())
-                task_dates[task_id] = {
-                    'start': task_start,
-                    'end': task_end
-                }
+                # Start after latest dependency
+                if dependency_ends:
+                    task_start = max(dependency_ends)
             
-            return task_dates
+            # Calculate end date
+            task_end = task_start + timedelta(days=task.duration.to_days())
+            task_dates[task_id] = {
+                'start': task_start,
+                'end': task_end
+            }
+        
+        return task_dates
 
     def _get_topological_order(self, schedule: ScheduleGraph) -> List[uuid.UUID]:
         """Get tasks in topological order (respecting dependencies)"""
