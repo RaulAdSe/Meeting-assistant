@@ -142,28 +142,29 @@ class EnhancedReportFormatter:
     def _format_follow_up_section(self, data: Dict) -> str:
         """Format the follow-up items section"""
         sections = ["## Tareas Pendientes\n"]
+        print(f"DEBUG: Follow-up tasks in analysis -> {data.get('follow_up_required', [])}")
 
-        # Ensure we access the correct key in the construction analysis
-        construction_analysis = data.get("construction_analysis", {})
-        tasks = construction_analysis.get("tareas_pendientes", [])
+        # Ensure we access the correct key in the analysis result
+        tasks = data.get("follow_up_required", [])  # Adapted for enhanced_formatter
 
         if tasks:
             for item in tasks:
-                sections.append(f"### {item['tarea']}")
-                sections.append(f"- **Ubicación:** {item['ubicacion']}")
-                sections.append(f"- **Asignado a:** {item['asignado_a']}")
-                sections.append(f"- **Prioridad:** {item['prioridad']}")
-                sections.append(f"- **Plazo:** {item['plazo']}\n")
+                sections.append(f"### {item.get('tarea', 'Tarea no especificada')}")
+                sections.append(f"- **Ubicación:** {item.get('ubicacion', 'Ubicación no especificada')}")
+                sections.append(f"- **Asignado a:** {item.get('asignado_a', 'No asignado')}")
+                sections.append(f"- **Prioridad:** {item.get('prioridad', 'No especificada')}")
+                sections.append(f"- **Plazo:** {item.get('plazo', 'Sin fecha definida')}\n")
 
             # Add general observations if present
-            if construction_analysis.get('observaciones_generales'):
+            if "observaciones_generales" in data:
                 sections.append("### Observaciones Generales")
-                for obs in construction_analysis['observaciones_generales']:
+                for obs in data["observaciones_generales"]:
                     sections.append(f"- {obs}\n")
         else:
             sections.append("No hay tareas pendientes registradas.\n")
 
         return "\n".join(sections)
+
 
     def _format_location_analysis(self, location_data: Dict) -> str:
         """Format the location analysis section"""
@@ -461,8 +462,7 @@ class EnhancedReportFormatter:
                     background-color: #f8f9fa;
                     padding: 1em;
                     border-radius: 4px;
-                    overflow-x: auto;
-                }
+                    }
                 .mermaid {
                     margin: 1em 0;
                 }
