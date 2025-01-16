@@ -268,3 +268,4 @@ class TestEnhancedReportFormatter:
         assert 'Technical issue found' in markdown_content
         assert 'Test Location' in markdown_content
         assert 'John Doe' in markdown_content
+

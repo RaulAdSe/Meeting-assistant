@@ -13,6 +13,7 @@ from src.construction.expert import ConstructionExpert
 from src.timing.analyser import TaskAnalyzer
 from src.timing.chronogram import ChronogramVisualizer
 from src.report_generation.llm_service import LLMService
+from src.timing.models import ScheduleGraph
 
 @dataclass
 class ReportSection:
@@ -77,37 +78,38 @@ class EnhancedReportFormatter:
     """
 
     def _format_executive_summary(self, analysis: Dict) -> str:
-        """Format the executive summary section with proper structure"""
-        summary = analysis.get('executive_summary', 'No summary available.')
+        """Format the executive summary section"""
+        summary = analysis.get('executive_summary', 'No summary available')
         vision_general = analysis.get('vision_general', {})
         
         # Format areas visited
         areas_section = []
         for area in vision_general.get('areas_visitadas', []):
-            areas_section.append(f"\n#### {area['area']}")
+            areas_section.append(f"\n### {area['area']}\n")
             
             if area.get('observaciones_clave'):
-                areas_section.append("**Key Observations:**")
+                areas_section.append("**Observaciones Clave:**")
                 for obs in area['observaciones_clave']:
                     areas_section.append(f"- {obs}")
                     
             if area.get('problemas_identificados'):
-                areas_section.append("\n**Identified Problems:**")
+                areas_section.append("\n**Problemas Identificados:**")
                 for prob in area['problemas_identificados']:
                     areas_section.append(f"- {prob}")
             
-            areas_section.append("")
+            areas_section.append("\n")
+        
+        areas_text = "\n".join(areas_section) if areas_section else "No se visitaron áreas"
+        
+        return f"""## Resumen Ejecutivo
 
-        return f"""## Executive Summary
+    {summary}
 
-{summary}
+    ### Áreas Visitadas
+    {areas_text}
 
-### Areas Visited
-{''.join(areas_section)}
+    ---"""
 
-**Analysis Confidence:** {analysis.get('confidence_scores', {}).get('overall', 0.6):.1%}
-
----"""
     
     def _format_problems_section(self, analysis: Dict) -> str:
         """Format the problems and solutions section"""
@@ -133,24 +135,28 @@ class EnhancedReportFormatter:
     
     def _format_follow_up_section(self, data: Dict) -> str:
         """Format the follow-up items section"""
-        sections = ["## Follow-up Items\n"]
+        sections = ["## Tareas Pendientes\n"]
         
-        # Get tasks from analysis
-        analysis = data.get('construction_analysis', {})
-        for item in analysis.get('tareas_pendientes', []):
-            sections.append(f"### {item['tarea']}")
-            sections.append(f"- **Location:** {item['ubicacion']}")
-            sections.append(f"- **Assigned to:** {item['asignado_a']}")
-            sections.append(f"- **Priority:** {item['prioridad']}")
-            sections.append(f"- **Deadline:** {item['plazo']}\n")
-        
-        # Add general observations
-        if analysis.get('observaciones_generales'):
-            sections.append("### General Observations")
-            for obs in analysis['observaciones_generales']:
-                sections.append(f"- {obs}")
-        
+        # Get tasks from construction analysis
+        tasks = data.get('tareas_pendientes', [])
+        if tasks:
+            for item in tasks:
+                sections.append(f"### {item['tarea']}")
+                sections.append(f"- **Ubicación:** {item['ubicacion']}")
+                sections.append(f"- **Asignado a:** {item['asignado_a']}")
+                sections.append(f"- **Prioridad:** {item['prioridad']}")
+                sections.append(f"- **Plazo:** {item['plazo']}\n")
+            
+            # Add general observations if present
+            if data.get('observaciones_generales'):
+                sections.append("### Observaciones Generales")
+                for obs in data['observaciones_generales']:
+                    sections.append(f"- {obs}\n")
+        else:
+            sections.append("No hay tareas pendientes registradas.\n")
+                
         return "\n".join(sections)
+
 
     def _format_location_analysis(self, location_data: Dict) -> str:
         """Format the location analysis section"""
@@ -231,6 +237,37 @@ class EnhancedReportFormatter:
         
         return sorted(sections, key=lambda s: s.order)
     
+    def _convert_to_schedule_graph(self, timing_data: Dict) -> ScheduleGraph:
+        """Convert timing analysis data to ScheduleGraph"""
+        from src.timing.models import Task, TaskRelationship, TaskRelationType, Duration, ScheduleGraph
+        
+        # Create schedule graph
+        schedule = ScheduleGraph(tasks={}, relationships=[])
+        task_ids = {}  # Store mapping of task names to IDs
+        
+        # First pass: Create all tasks
+        for task_data in timing_data.get('tasks', []):
+            task = Task(
+                name=task_data['name'],
+                description=task_data.get('description', ''),
+                duration=Duration(**task_data['duration'])
+            )
+            schedule.add_task(task)
+            task_ids[task.name] = task.id
+        
+        # Second pass: Create relationships
+        for task_data in timing_data.get('tasks', []):
+            for dep_name in task_data.get('dependencies', []):
+                if dep_name in task_ids and task_data['name'] in task_ids:
+                    relationship = TaskRelationship(
+                        from_task_id=task_ids[dep_name],
+                        to_task_id=task_ids[task_data['name']],
+                        relation_type=TaskRelationType.SEQUENTIAL
+                    )
+                    schedule.add_relationship(relationship)
+        
+        return schedule
+
     async def generate_comprehensive_report(
         self,
         transcript_text: str,
@@ -240,38 +277,12 @@ class EnhancedReportFormatter:
         analysis_data: Optional[Dict[str, Any]] = None,
         start_date: Optional[datetime] = None
     ) -> Dict[str, Path]:
-        """
-        Generate a comprehensive report integrating all analyses.
-        
-        Args:
-            transcript_text: Raw transcript text
-            visit_id: UUID of the current visit
-            location_id: UUID of the construction site location
-            output_dir: Directory to save the report
-            analysis_data: Optional pre-computed analysis data
-            start_date: Optional start date for chronogram
-            
-        Returns:
-            Dictionary with paths to generated report files
-        """
+        """Generate a comprehensive report integrating all analyses."""
         try:
             # Process location data
             self.logger.info("Processing location data...")
-            try:
-                location_data = self.location_processor.process_transcript(transcript_text)
-                if not location_data:
-                    self.logger.warning("No location data found, using defaults")
-                    location_data = {
-                        'main_site': {'company': 'Unknown Company', 'site': 'Unknown Site'},
-                        'location_changes': []
-                    }
-            except Exception as e:
-                self.logger.error(f"Error processing location data: {str(e)}")
-                location_data = {
-                    'main_site': {'company': 'Unknown Company', 'site': 'Unknown Site'},
-                    'location_changes': []
-                }
-
+            location_data = self.location_processor.process_transcript(transcript_text)
+            
             # Use provided analysis data or generate new analysis
             if analysis_data:
                 construction_analysis = analysis_data
@@ -284,7 +295,7 @@ class EnhancedReportFormatter:
                     location_id=location_id
                 )
                 construction_analysis = {
-                    'executive_summary': "Visit analysis completed successfully",
+                    'executive_summary': analysis_result.executive_summary,
                     'problems': analysis_result.problems,
                     'solutions': analysis_result.solutions,
                     'confidence_scores': analysis_result.confidence_scores,
@@ -293,10 +304,13 @@ class EnhancedReportFormatter:
             
             # Get timing analysis
             self.logger.info("Analyzing timing and tasks...")
-            timing_analysis = self.task_analyzer.analyze_transcript(
+            timing_data = self.task_analyzer.analyze_transcript(
                 transcript_text=transcript_text,
                 location_id=location_id
             )
+            
+            # Convert timing data to ScheduleGraph
+            timing_analysis = self._convert_to_schedule_graph(timing_data)
             
             # Generate chronogram
             self.logger.info("Generating chronogram visualization...")

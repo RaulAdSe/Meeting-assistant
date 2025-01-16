@@ -2,6 +2,7 @@ from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 import uuid
 from .models import Task, Duration, ScheduleGraph, TaskRelationship, TaskRelationType
+from typing import Set  # Ensure Set is imported
 
 class ChronogramVisualizer:
     """Creates visualizations of construction schedules"""
@@ -207,30 +208,37 @@ class ChronogramVisualizer:
         return task_dates
 
     def _get_topological_order(self, schedule: ScheduleGraph) -> List[uuid.UUID]:
-        """Get tasks in topological order (respecting dependencies)"""
-        # Implementation of topological sort
+        """Get tasks in topological order (respecting dependencies) with cycle detection"""
         visited = set()
         temp_mark = set()
         order = []
         
-        def visit(task_id: uuid.UUID):
-            if task_id in temp_mark:
-                raise ValueError("Circular dependency detected")
-            if task_id not in visited:
-                temp_mark.add(task_id)
+        def visit(task_id: uuid.UUID, path: Set[uuid.UUID]):
+            if task_id in path:
+                # We found a cycle - break it by ignoring this dependency
+                self.logger.warning(f"Found circular dependency involving task {task_id}")
+                return
                 
-                # Visit dependencies
-                for rel in schedule.relationships:
-                    if rel.to_task_id == task_id:
-                        visit(rel.from_task_id)
+            if task_id in visited:
+                return
                 
-                temp_mark.remove(task_id)
-                visited.add(task_id)
-                order.append(task_id)
+            path.add(task_id)
+            temp_mark.add(task_id)
+            
+            # Visit dependencies
+            for rel in schedule.relationships:
+                if rel.to_task_id == task_id:
+                    visit(rel.from_task_id, path.copy())
+            
+            temp_mark.remove(task_id)
+            path.remove(task_id)
+            visited.add(task_id)
+            order.append(task_id)
         
+        # Visit each task
         for task_id in schedule.tasks:
             if task_id not in visited:
-                visit(task_id)
+                visit(task_id, set())
         
         return list(reversed(order))
 

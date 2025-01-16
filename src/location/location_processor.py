@@ -141,3 +141,27 @@ class LocationProcessor:
         if isinstance(main_site, Location):
             return f"{main_site.company} - {main_site.site}"
         return "Unknown Location"
+    
+    def _handle_location_change(self, change: Dict) -> Optional[LocationChange]:
+        """Safely handle location change data"""
+        try:
+            # Default to current time if timestamp is missing
+            timestamp = datetime.now()
+            if change.get('timestamp'):
+                try:
+                    timestamp = datetime.strptime(change['timestamp'], '%Y-%m-%dT%H:%M:%S')
+                except ValueError:
+                    try:
+                        timestamp = datetime.strptime(change['timestamp'], '%H:%M:%S')
+                    except ValueError:
+                        pass  # Keep default timestamp
+            
+            return LocationChange(
+                timestamp=timestamp,
+                area=change.get('location', 'Unknown Area'),
+                sublocation=change.get('sublocation'),
+                notes=change.get('notes')
+            )
+        except Exception as e:
+            self.logger.warning(f"Error processing location change: {str(e)}")
+            return None
