@@ -29,7 +29,7 @@ class CustomJSONEncoder(json.JSONEncoder):
             return obj.isoformat()
         elif isinstance(obj, Enum):
             return obj.value
-        elif isinstance(obj, Path):  # Handle PosixPath and other Path objects
+        elif isinstance(obj, Path):  
             return str(obj)
         elif hasattr(obj, '__dict__'):
             return obj.__dict__

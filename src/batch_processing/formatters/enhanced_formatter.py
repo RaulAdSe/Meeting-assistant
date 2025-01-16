@@ -81,39 +81,45 @@ class EnhancedReportFormatter:
         """Format the executive summary section"""
         summary = analysis.get('executive_summary', 'No summary available')
         vision_general = analysis.get('vision_general', {})
-        
+
+        # Include confidence score if available
+        confidence = analysis.get("confidence_scores", {}).get("overall", None)
+        confidence_text = f"\n\n**Nivel de confianza:** {confidence * 100:.1f}%" if confidence is not None else ""
+
         # Format areas visited
         areas_section = []
         for area in vision_general.get('areas_visitadas', []):
             areas_section.append(f"\n### {area['area']}\n")
-            
+
             if area.get('observaciones_clave'):
                 areas_section.append("**Observaciones Clave:**")
                 for obs in area['observaciones_clave']:
                     areas_section.append(f"- {obs}")
-                    
+
             if area.get('problemas_identificados'):
                 areas_section.append("\n**Problemas Identificados:**")
                 for prob in area['problemas_identificados']:
                     areas_section.append(f"- {prob}")
-            
+
             areas_section.append("\n")
-        
+
         areas_text = "\n".join(areas_section) if areas_section else "No se visitaron áreas"
-        
+
         return f"""## Resumen Ejecutivo
 
-    {summary}
+        {summary}
 
-    ### Áreas Visitadas
-    {areas_text}
+        ### Áreas Visitadas
+        {areas_text}
 
-    ---"""
+        {confidence_text}
+
+        ---"""
 
     
     def _format_problems_section(self, analysis: Dict) -> str:
         """Format the problems and solutions section"""
-        sections = ["## Problems and Solutions\n"]
+        sections = ["## Problemas y Soluciones\n"]
         
         # Process technical findings
         for finding in analysis.get('hallazgos_tecnicos', []):
@@ -136,9 +142,11 @@ class EnhancedReportFormatter:
     def _format_follow_up_section(self, data: Dict) -> str:
         """Format the follow-up items section"""
         sections = ["## Tareas Pendientes\n"]
-        
-        # Get tasks from construction analysis
-        tasks = data.get('tareas_pendientes', [])
+
+        # Ensure we access the correct key in the construction analysis
+        construction_analysis = data.get("construction_analysis", {})
+        tasks = construction_analysis.get("tareas_pendientes", [])
+
         if tasks:
             for item in tasks:
                 sections.append(f"### {item['tarea']}")
@@ -146,17 +154,16 @@ class EnhancedReportFormatter:
                 sections.append(f"- **Asignado a:** {item['asignado_a']}")
                 sections.append(f"- **Prioridad:** {item['prioridad']}")
                 sections.append(f"- **Plazo:** {item['plazo']}\n")
-            
+
             # Add general observations if present
-            if data.get('observaciones_generales'):
+            if construction_analysis.get('observaciones_generales'):
                 sections.append("### Observaciones Generales")
-                for obs in data['observaciones_generales']:
+                for obs in construction_analysis['observaciones_generales']:
                     sections.append(f"- {obs}\n")
         else:
             sections.append("No hay tareas pendientes registradas.\n")
-                
-        return "\n".join(sections)
 
+        return "\n".join(sections)
 
     def _format_location_analysis(self, location_data: Dict) -> str:
         """Format the location analysis section"""
@@ -194,35 +201,35 @@ class EnhancedReportFormatter:
         
         # Header section
         sections.append(ReportSection(
-            title="Site Information",
+            title="Información de la Obra",
             content=self._format_header(data['location_data']),
             order=1
         ))
         
         # Executive summary
         sections.append(ReportSection(
-            title="Executive Summary",
+            title="Resumen Ejecutivo",
             content=self._format_executive_summary(data['construction_analysis']),
             order=2
         ))
         
         # Location analysis
         sections.append(ReportSection(
-            title="Location Analysis",
+            title="Análisis de Ubicación",
             content=self._format_location_analysis(data['location_data']),
             order=3
         ))
         
         # Problems and solutions
         sections.append(ReportSection(
-            title="Problems and Solutions",
+            title="Problemas y Soluciones",
             content=self._format_problems_section(data['construction_analysis']),
             order=4
         ))
         
         # Chronogram
         sections.append(ReportSection(
-            title="Project Timeline",
+            title="Cronograma del Proyecto",
             content=data['chronogram'],
             type="mermaid",
             order=5
@@ -230,17 +237,22 @@ class EnhancedReportFormatter:
         
         # Follow-up items
         sections.append(ReportSection(
-            title="Follow-up Items",
+            title="Tareas Pendientes",
             content=self._format_follow_up_section(data),
             order=6
         ))
-        
         return sorted(sections, key=lambda s: s.order)
     
     def _convert_to_schedule_graph(self, timing_data: Dict) -> ScheduleGraph:
         """Convert timing analysis data to ScheduleGraph"""
         from src.timing.models import Task, TaskRelationship, TaskRelationType, Duration, ScheduleGraph
         
+
+        if isinstance(timing_data, ScheduleGraph):
+            return timing_data  # No need to convert if it's already correct
+
+        # Otherwise, proceed with conversion from dict to ScheduleGraph
+
         # Create schedule graph
         schedule = ScheduleGraph(tasks={}, relationships=[])
         task_ids = {}  # Store mapping of task names to IDs
@@ -267,6 +279,46 @@ class EnhancedReportFormatter:
                     schedule.add_relationship(relationship)
         
         return schedule
+    
+
+    async def _generate_report_files(
+        self,
+        sections: List[ReportSection],
+        output_dir: Path,
+        metadata: Dict[str, Any]
+    ) -> Dict[str, Path]:
+        """Generate all report file formats"""
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate markdown
+        markdown_path = output_dir / "report.md"
+        markdown_content = self._generate_markdown(sections)
+        markdown_path.write_text(markdown_content)
+        
+        # Generate PDF
+        pdf_path = output_dir / "report.pdf"
+        await self._generate_pdf(markdown_content, pdf_path)
+        
+        # Save metadata
+        metadata_path = output_dir / "report_metadata.json"
+        metadata.update({
+            "sections": [
+                {
+                    "title": section.title,
+                    "type": section.type,
+                    "order": section.order
+                }
+                for section in sections
+            ]
+        })
+        metadata_path.write_text(json.dumps(metadata, indent=2))
+        
+        return {
+            "markdown": markdown_path,
+            "pdf": pdf_path,
+            "metadata": metadata_path
+        }
+
 
     async def generate_comprehensive_report(
         self,
@@ -279,13 +331,17 @@ class EnhancedReportFormatter:
     ) -> Dict[str, Path]:
         """Generate a comprehensive report integrating all analyses."""
         try:
+            logger = logging.getLogger(__name__)
             # Process location data
             self.logger.info("Processing location data...")
             location_data = self.location_processor.process_transcript(transcript_text)
-            
+        
+            logger.debug(f"Generating report for visit {visit_id}, location {location_id}")
+
             # Use provided analysis data or generate new analysis
             if analysis_data:
                 construction_analysis = analysis_data
+                logger.debug(f"Analysis Data: {analysis_data}")
             else:
                 # Get construction analysis
                 self.logger.info("Analyzing construction aspects...")
@@ -327,7 +383,12 @@ class EnhancedReportFormatter:
                 chronogram=chronogram
             )
             
+            
+
             # Generate report files
+            print("Final Report Markdown:")
+            print(self._generate_markdown(sections))
+
             return await self._generate_report_files(
                 sections=sections,
                 output_dir=output_dir,
@@ -342,43 +403,6 @@ class EnhancedReportFormatter:
             self.logger.error(f"Error generating report: {str(e)}")
             raise
 
-    async def _generate_report_files(
-        self,
-        sections: List[ReportSection],
-        output_dir: Path,
-        metadata: Dict[str, Any]
-    ) -> Dict[str, Path]:
-        """Generate all report file formats"""
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Generate markdown
-        markdown_path = output_dir / "report.md"
-        markdown_content = self._generate_markdown(sections)
-        markdown_path.write_text(markdown_content)
-        
-        # Generate PDF
-        pdf_path = output_dir / "report.pdf"
-        await self._generate_pdf(markdown_content, pdf_path)
-        
-        # Save metadata
-        metadata_path = output_dir / "report_metadata.json"
-        metadata.update({
-            "sections": [
-                {
-                    "title": section.title,
-                    "type": section.type,
-                    "order": section.order
-                }
-                for section in sections
-            ]
-        })
-        metadata_path.write_text(json.dumps(metadata, indent=2))
-        
-        return {
-            "markdown": markdown_path,
-            "pdf": pdf_path,
-            "metadata": metadata_path
-        }
 
     def _generate_markdown(self, sections: List[ReportSection]) -> str:
         """Generate complete markdown content from sections"""

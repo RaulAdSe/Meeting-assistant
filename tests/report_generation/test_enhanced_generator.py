@@ -204,18 +204,18 @@ class TestEnhancedReportFormatter:
         
         # Check all sections are present
         section_titles = [s.title for s in sections]
-        assert "Site Information" in section_titles
-        assert "Executive Summary" in section_titles
-        assert "Location Analysis" in section_titles
-        assert "Problems and Solutions" in section_titles
-        assert "Project Timeline" in section_titles
-        assert "Follow-up Items" in section_titles
+        assert "Información de la Obra" in section_titles
+        assert "Resumen Ejecutivo" in section_titles
+        assert "Análisis de Ubicación" in section_titles
+        assert "Problemas y Soluciones" in section_titles
+        assert "Cronograma del Proyecto" in section_titles
+        assert "Tareas Pendientes" in section_titles
         
         # Check section order
         section_order = {s.title: s.order for s in sections}
-        assert section_order["Site Information"] < section_order["Executive Summary"]
-        assert section_order["Executive Summary"] < section_order["Location Analysis"]
-        assert section_order["Problems and Solutions"] < section_order["Follow-up Items"]
+        assert section_order["Información de la Obra"] < section_order["Resumen Ejecutivo"]
+        assert section_order["Resumen Ejecutivo"] < section_order["Análisis de Ubicación"]
+        assert section_order["Problemas y Soluciones"] < section_order["Tareas Pendientes"]
 
     @pytest.mark.asyncio
     async def test_generation_with_real_data(self, formatter, sample_location_data, 
