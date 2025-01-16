@@ -255,37 +255,43 @@ class EnhancedBatchTranscriber:
             raise
 
     def process_audio(self, audio_path: str) -> Dict[str, Any]:
+        """Process audio file with transcription and speaker diarization"""
         try:
-            # Get basic transcription
+            # Get basic transcription first
             transcript_result = self.transcriber.process_audio(audio_path)
             if not transcript_result or 'transcript' not in transcript_result:
                 raise FileProcessingError("Transcription failed")
                 
             # Get location data first
-            location_data = self.location_processor.process_transcript(
-                transcript_result['transcript']['text']
-            )
-            
-            # Use unified location handler
+            transcript_text = transcript_result['transcript'].get('text')
+            if not transcript_text:
+                raise FileProcessingError("No transcript text available")
+
+            location_data = self.location_processor.process_transcript(transcript_text)
+                
+            # Create or get location - this will return a Location object
             location = self._handle_location(location_data=location_data)
+            if not location:
+                raise ValueError("Failed to create or retrieve location")
+
             location_id = location.id
-            
-            # Create visit ID
+                
+            # Create visit ID for tracking
             visit_id = uuid.uuid4()
-            
-        # Get construction analysis
+                
+            # Get construction analysis
             construction_analysis = self.construction_expert.analyze_visit(
                 visit_id=visit_id,
-                transcript_text=transcript_result['transcript']['text'],
+                transcript_text=transcript_text,
                 location_id=location_id
             )
-            
+                
             # Get timing analysis
             timing_analysis = self.task_analyzer.analyze_transcript(
-                transcript_text=transcript_result['transcript']['text'],
+                transcript_text=transcript_text,
                 location_id=location_id
             )
-            
+                
             return {
                 'transcript': transcript_result['transcript'],
                 'construction_analysis': {
@@ -306,7 +312,7 @@ class EnhancedBatchTranscriber:
                     'analyzed_at': datetime.now().isoformat()
                 }
             }
-
+                
         except Exception as e:
             self.logger.error(f"Error processing audio {audio_path}: {str(e)}")
             raise FileProcessingError(f"Failed to process {audio_path}: {str(e)}")

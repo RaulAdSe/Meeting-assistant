@@ -350,9 +350,9 @@ class EnhancedReportFormatter:
                     transcript_text=transcript_text,
                     location_id=location_id
                 )
+
                 construction_analysis = {
-                    'executive_summary': analysis_result.executive_summary,
-                    'problems': analysis_result.problems,
+                    'executive_summary': analysis_result.metadata.get('executive_summary', 'No summary available'),                    'problems': analysis_result.problems,
                     'solutions': analysis_result.solutions,
                     'confidence_scores': analysis_result.confidence_scores,
                     'metadata': analysis_result.metadata

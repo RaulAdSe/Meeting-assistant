@@ -54,6 +54,8 @@ class ConstructionExpert:
             )
             
             # Get LLM analysis of transcript
+            print("ConstructionExpert: Analyzing visit with ID:", visit_id)
+            
             llm_analysis = self.llm_service.analyze_transcript(
                 transcript_text=transcript_text,
                 session_info={"session_id": str(visit_id)},
@@ -74,6 +76,8 @@ class ConstructionExpert:
             )
             
             execution_time = time.time() - start_time
+
+            executive_summary = llm_analysis.get("executive_summary", "No summary available")
             
             return AnalysisResult(
                 context=context,
@@ -83,7 +87,8 @@ class ConstructionExpert:
                 execution_time=execution_time,
                 metadata={
                     "llm_analysis_id": llm_analysis.get("metadata", {}).get("analysis_id"),
-                    "location_data": location_data
+                    "location_data": location_data,
+                    "executive_summary": executive_summary  # Add this line
                 }
             )
             
