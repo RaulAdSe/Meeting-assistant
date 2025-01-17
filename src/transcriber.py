@@ -198,3 +198,17 @@ class EnhancedTranscriber:
                 if result["transcript"]:
                     f.write(result["transcript"]["text"])
                     f.write("\n\n")
+
+    def get_transcript_data(transcription_result):
+        """
+        Extracts structured transcript data from Whisper transcription output.
+        """
+        transcript_data = []
+        
+        for chunk in transcription_result.get("chunks", []):
+            transcript_data.append({
+                "text": chunk["text"],
+                "timestamp": chunk["timestamp"][0]  # Use start timestamp
+            })
+        
+        return transcript_data

@@ -22,27 +22,55 @@ class LocationProcessor:
             
         self.client = openai.OpenAI(api_key=api_key)
 
-    def process_transcript(self, transcript_text: str) -> Dict:
+# Assuming `transcript_data` contains word-level timestamps from the transcription service
+    def assign_timestamps_to_locations(transcript_data, extracted_locations):
         """
-        Analiza el transcripto para identificar el sitio principal de construcción y los cambios de ubicación.
-        Devuelve información estructurada sobre la ubicación.
+        Assigns timestamps to locations based on when they appear in the transcript.
+        """
+        location_changes = []
+
+        for loc in extracted_locations:
+            matched_timestamp = None
+
+            # Search for the first occurrence of the location in the transcript data
+            for entry in transcript_data:
+                if loc["location"].lower() in entry["text"].lower():
+                    matched_timestamp = entry["timestamp"]
+                    break  # Stop at the first match
+
+            # If no timestamp is found, use first available timestamp
+            if not matched_timestamp and transcript_data:
+                matched_timestamp = transcript_data[0]["timestamp"]
+
+            location_changes.append(LocationChange(
+                timestamp=matched_timestamp,
+                area=loc["location"],
+                sublocation=loc.get("sublocation", "Unknown Sublocation")
+            ))
+
+        return location_changes
+
+    def process_transcript(self, transcript_text: str, transcript_data: List[Dict]) -> Dict:
+        """
+        Processes the transcript, identifying the main site and tracking location changes.
+        Uses actual timestamps from transcript_data instead of AI-generated timestamps.
         """
         prompt = self._create_location_prompt(transcript_text)
-        
+
         try:
             response = self.client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[{
                     "role": "system",
                     "content": "Eres un analizador de ubicaciones de sitios de construcción. Extrae el sitio principal de construcción "
-                               "y rastrea el movimiento entre diferentes áreas durante la visita."
+                            "y rastrea los nombres de áreas mencionadas, pero no asigna marcas de tiempo."
                 }, {
                     "role": "user",
                     "content": prompt
                 }],
                 functions=[{
                     "name": "extract_locations",
-                    "description": "Extrae ubicaciones de sitios de construcción del transcripto",
+                    "description": "Extrae ubicaciones mencionadas en el transcripto.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -53,12 +81,11 @@ class LocationProcessor:
                                     "location": {"type": "string"}
                                 }
                             },
-                            "location_changes": {
+                            "locations": {  # No timestamps here!
                                 "type": "array",
                                 "items": {
                                     "type": "object",
                                     "properties": {
-                                        "timestamp": {"type": "string"},
                                         "location": {"type": "string"},
                                         "sublocation": {"type": "string", "description": "Área específica dentro de la ubicación"}
                                     }
@@ -70,61 +97,36 @@ class LocationProcessor:
                 }],
                 function_call={"name": "extract_locations"}
             )
-            
+
             result = json.loads(response.choices[0].message.function_call.arguments)
-            
-            # Convertir a modelos de dominio
+
+            print("DEBUG: Raw AI response data (before processing):")
+            print(result)
+
+            # Convert to domain models
             main_site = Location(
                 company=result['main_site']['company'],
                 site=result['main_site']['location']
             )
-            
-            location_changes = []
 
-            # ach new location change should have an associated timestamp, which ideally comes from the transcript itself or from an inferred time based on the audio file.
-            
-            for change in result.get('location_changes', []):
-                try:
-                    raw_timestamp = change.get('timestamp')  # Use .get() to avoid KeyError
+            # Extract locations without timestamps
+            extracted_locations = result.get('locations', [])
 
-                    if not raw_timestamp:  # Covers None, empty strings, or missing keys
-                        print("Warning: Missing or None timestamp, using current time.")
-                        timestamp = datetime.now()
-                    else:
-                        # Attempt different timestamp formats
-                        timestamp = None
-                        for fmt in ['%H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S']:
-                            try:
-                                timestamp = datetime.strptime(raw_timestamp, fmt)
-                                break
-                            except ValueError:
-                                continue
-                        
-                        if timestamp is None:
-                            print(f"Warning: Could not parse timestamp '{raw_timestamp}', using current time.")
-                            timestamp = datetime.now()
+            # Assign timestamps using transcript data
+            location_changes = self.assign_timestamps_to_locations(transcript_data, extracted_locations)
 
-                    location_changes.append(LocationChange(
-                        timestamp=timestamp,
-                        area=change.get('location', 'Unknown Location'),
-                        sublocation=change.get('sublocation', 'Unknown Sublocation')
-                    ))
-
-                except Exception as e:
-                    print(f"Error processing timestamp {change.get('timestamp', 'UNKNOWN')}: {str(e)}")
-                    continue
-
-            
             return {
                 'main_site': main_site,
                 'location_changes': sorted(location_changes, key=lambda x: x.timestamp)
             }
+
         except Exception as e:
             print(f"Error processing locations: {str(e)}")
             return {
                 'main_site': Location(company="Unknown", site="Unknown"),
                 'location_changes': []
             }
+
 
     def _create_location_prompt(self, transcript: str) -> str:
         return f"""
@@ -175,3 +177,6 @@ class LocationProcessor:
         except Exception as e:
             self.logger.warning(f"Error processing location change: {str(e)}")
             return None
+        
+
+

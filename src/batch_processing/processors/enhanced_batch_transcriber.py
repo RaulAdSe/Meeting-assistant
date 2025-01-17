@@ -254,6 +254,20 @@ class EnhancedBatchTranscriber:
             self.logger.error(f"Session processing error: {str(e)}")
             raise
 
+    def get_transcript_data(self, transcription_result):
+        """
+        Extracts structured transcript data from Whisper transcription output.
+        """
+        transcript_data = []
+        
+        for chunk in transcription_result.get("chunks", []):
+            transcript_data.append({
+                "text": chunk["text"],
+                "timestamp": chunk["timestamp"][0]  
+            })
+        
+        return transcript_data
+
     def process_audio(self, audio_path: str) -> Dict[str, Any]:
         """Process audio file with transcription and speaker diarization"""
         try:
@@ -266,8 +280,12 @@ class EnhancedBatchTranscriber:
             transcript_text = transcript_result['transcript'].get('text')
             if not transcript_text:
                 raise FileProcessingError("No transcript text available")
-
-            location_data = self.location_processor.process_transcript(transcript_text)
+            
+            print(transcript_result)
+            
+            transcript_data = self.get_transcript_data(transcript_result)
+            
+            location_data = self.location_processor.process_transcript(transcript_text, transcript_data)
                 
             # Create or get location - this will return a Location object
             location = self._handle_location(location_data=location_data)
