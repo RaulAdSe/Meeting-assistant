@@ -13,7 +13,7 @@ from src.construction.expert import ConstructionExpert
 from src.timing.analyser import TaskAnalyzer
 from src.timing.chronogram import ChronogramVisualizer
 from src.report_generation.llm_service import LLMService
-from src.timing.models import ScheduleGraph
+from src.timing.models import ScheduleGraph, Duration
 
 @dataclass
 class ReportSection:
@@ -128,98 +128,194 @@ class EnhancedReportFormatter:
         """Format the problems and solutions section"""
         sections = ["## Problemas y Soluciones\n"]
         
-        # Process technical findings
-        for finding in analysis.get('hallazgos_tecnicos', []):
-            sections.append(f"### Problem in {finding['ubicacion']}")
-            sections.append(f"**Severity:** {finding['severidad']}")
-            sections.append(f"**Description:** {finding['hallazgo']}")
-            sections.append(f"**Recommended Action:** {finding['accion_recomendada']}\n")
+        # Handle direct technical findings first
+        if analysis.get('hallazgos_tecnicos'):
+            for finding in analysis['hallazgos_tecnicos']:
+                sections.append(f"### Problem in {finding['ubicacion']}")
+                sections.append(f"**Severity:** {finding['severidad']}")
+                sections.append(f"**Description:** {finding['hallazgo']}")
+                if 'accion_recomendada' in finding:
+                    sections.append(f"**Recommended Action:** {finding['accion_recomendada']}")
+                sections.append("")
         
-        # Process safety concerns
+        # Handle safety concerns
         if analysis.get('preocupaciones_seguridad'):
             sections.append("### Safety Concerns")
             for concern in analysis['preocupaciones_seguridad']:
                 sections.append(f"**Location:** {concern['ubicacion']}")
                 sections.append(f"**Concern:** {concern['preocupacion']}")
                 sections.append(f"**Priority:** {concern['prioridad']}")
-                sections.append(f"**Mitigation:** {concern['mitigacion']}\n")
+                sections.append(f"**Mitigation:** {concern['mitigacion']}")
+                sections.append("")
+        
+        # Then handle formal Problem objects if present
+        if analysis.get('problems'):
+            for problem in analysis['problems']:
+                sections.append(f"### Problem in {problem.location_context.area}")
+                sections.append(f"**Severity:** {problem.severity.value}")
+                sections.append(f"**Description:** {problem.description}")
+                
+                # Add solutions for this problem
+                if analysis.get('solutions') and problem.id in analysis['solutions']:
+                    problem_solutions = analysis['solutions'][problem.id]
+                    sections.append("\n**Proposed Solutions:**")
+                    for solution in problem_solutions:
+                        sections.append(f"- {solution.description}")
+                        if solution.estimated_time:
+                            sections.append(f"  - Estimated time: {solution.estimated_time} minutes")
+                sections.append("")
+        
+        if len(sections) == 1:  # Only header present
+            sections.append("No se han identificado problemas en esta visita.\n")
         
         return "\n".join(sections)
-    
+
+    def _get_task_properties(self, task) -> tuple:
+        """Extract task properties safely whether task is a dict or Task object"""
+        if isinstance(task, dict):
+            return (
+                task.get('name', 'Unknown Task'),
+                task.get('duration', {}),
+                task.get('can_be_parallel', False),
+                task.get('dependencies', [])
+            )
+        else:
+            # Handle Task object
+            return (
+                getattr(task, 'name', 'Unknown Task'),
+                getattr(task, 'duration', None),
+                getattr(task, 'can_be_parallel', False),
+                getattr(task, 'dependencies', [])
+            )
+
+    def _format_timing_section(self, task_data: Dict) -> str:
+        """Format the timing analysis section"""
+        sections = ["## Timing Analysis\n"]
+        
+        # Add detailed timing information
+        tasks = []
+        if isinstance(task_data, ScheduleGraph):
+            tasks = list(task_data.tasks.values())
+        elif isinstance(task_data, dict) and task_data.get('tasks'):
+            tasks = task_data['tasks']
+
+        if not tasks:
+            return ""
+
+        sections.append("### Task Durations and Dependencies\n")
+        for task in tasks:
+            name, duration_data, can_parallel, dependencies = self._get_task_properties(task)
+
+            # Format duration
+            duration_str = None
+            if isinstance(duration_data, dict):
+                amount = duration_data.get('amount')
+                unit = duration_data.get('unit')
+                if amount is not None and unit is not None:
+                    duration_str = f"{amount} {unit}"
+            elif isinstance(duration_data, Duration):
+                duration_str = f"{duration_data.amount} {duration_data.unit}"
+
+            # Build section content
+            if duration_str:
+                sections.append(f"- **{name}:** {duration_str}")
+                
+            # Add dependencies
+            if dependencies:
+                sections.append(f"  - Depends on: {', '.join(str(d) for d in dependencies)}")
+                
+            # Add parallel execution info
+            if can_parallel:
+                sections.append("  - Can be executed in parallel")
+                
+        sections.append("")  # Add spacing at the end
+        return "\n".join(sections)
+
+
     def _format_follow_up_section(self, data: Dict) -> str:
         """Format the follow-up items section"""
         sections = ["## Tareas Pendientes\n"]
-
-        # Try to get follow-up tasks first from analysis_data if provided
-        follow_ups = []
-        if data.get('follow_up_required'):
-            follow_ups = data['follow_up_required']
-        elif data.get('construction_analysis', {}).get('tareas_pendientes'):
-            follow_ups = data['construction_analysis']['tareas_pendientes']
-
-        if follow_ups:
-            for item in follow_ups:
-                # Handle both naming conventions (Spanish and English)
-                task_name = item.get('tarea') or item.get('task', 'Unknown Task')
-                location = item.get('ubicacion') or item.get('location', 'Unknown Location')
-                assigned = item.get('asignado_a') or item.get('assigned_to', 'Unassigned')
-                priority = item.get('prioridad') or item.get('priority', 'Normal')
-                deadline = item.get('plazo') or item.get('deadline', 'Not specified')
-
+        
+        construction_analysis = data.get('construction_analysis', {})
+        pending_tasks = construction_analysis.get('tareas_pendientes', [])
+        
+        # Add tasks from tareas_pendientes
+        if pending_tasks:
+            for task in pending_tasks:
                 sections.extend([
-                    f"### {task_name}",
-                    f"- **Ubicación:** {location}",
-                    f"- **Asignado a:** {assigned}",
-                    f"- **Prioridad:** {priority}",
-                    f"- **Plazo:** {deadline}\n"
+                    f"### {task['tarea']}",
+                    f"- **Ubicación:** {task['ubicacion']}",
+                    f"- **Asignado a:** {task['asignado_a']}",
+                    f"- **Prioridad:** {task['prioridad']}",
+                    f"- **Plazo:** {task['plazo']}\n"
                 ])
-
-        # Add general observations - correctly access from construction_analysis
-        observations = []
-        if data.get('construction_analysis', {}).get('observaciones_generales'):
-            observations = data['construction_analysis']['observaciones_generales']
-        elif data.get('general_observations'):
-            observations = data['general_observations']
-
-        if observations:
+        
+        # Add tasks from timing analysis
+        timing_analysis = data.get('timing_analysis')
+        if isinstance(timing_analysis, ScheduleGraph):
+            for task in timing_analysis.tasks.values():
+                sections.extend([
+                    f"### {task.name}",
+                    f"- **Ubicación:** {task.location or 'No especificada'}",
+                    f"- **Responsable:** {task.responsible or 'No asignado'}",
+                    f"- **Duración:** {task.duration.amount} {task.duration.unit}",
+                    f"- **Estado:** {task.status.value}\n"
+                ])
+                if task.metadata.get('risks'):
+                    sections.append("**Riesgos identificados:**")
+                    for risk in task.metadata['risks']:
+                        sections.append(f"- {risk}")
+                    sections.append("")
+        
+        # Add general observations
+        if construction_analysis.get('observaciones_generales'):
             sections.append("### Observaciones Generales")
-            for obs in observations:
+            for obs in construction_analysis['observaciones_generales']:
                 sections.append(f"- {obs}\n")
-
-        if not follow_ups and not observations:
-            sections.append("\nNo hay tareas pendientes registradas.\n")
-
+        
+        if len(sections) == 1:  # Only header present
+            sections.append("No hay tareas pendientes registradas.\n")
+        
         return "\n".join(sections)
 
     def _format_location_analysis(self, location_data: Dict) -> str:
         """Format the location analysis section"""
         sections = ["## Location Analysis\n"]
-
-        # Add movement tracking
+        
+        # Add location changes if present
         if location_data.get('location_changes'):
             sections.append("### Movement Timeline")
-            for change in location_data['location_changes']:
-                # Handle both dictionary and object formats
-                if hasattr(change, 'timestamp'):
-                    time = change.timestamp.strftime('%H:%M:%S')
-                    area = change.area
-                    subloc = getattr(change, 'sublocation', '')
-                    notes = getattr(change, 'notes', '')
-                else:
-                    time = change.get('timestamp', datetime.now()).strftime('%H:%M:%S')
-                    area = change.get('area', 'Unknown Area')
-                    subloc = change.get('sublocation', '')
-                    notes = change.get('notes', '')
+            
+            # Sort changes by timestamp
+            changes = sorted(location_data['location_changes'], key=lambda x: x.timestamp)
+            
+            for change in changes:
+                time = change.timestamp.strftime('%H:%M:%S')
+                area = change.area
+                subloc = change.sublocation if change.sublocation else ''
+                notes = f" - {change.notes}" if change.notes else ''
                 
-                # Format location entry
                 location_str = f"- **{time}** - {area}"
                 if subloc:
                     location_str += f" ({subloc})"
                 if notes:
-                    location_str += f" - {notes}"
+                    location_str += notes
                 sections.append(location_str)
         
+        # Always show current location
+        main_site = location_data.get('main_site')
+        if main_site:
+            sections.append("### Current Location")
+            if isinstance(main_site, dict):
+                sections.append(f"**Company:** {main_site['company']}")
+                sections.append(f"**Site:** {main_site['location'] if 'location' in main_site else main_site.get('site', 'Unknown')}")
+            else:
+                sections.append(f"**Company:** {getattr(main_site, 'company', 'Unknown')}")
+                sections.append(f"**Site:** {getattr(main_site, 'site', 'Unknown')}")
+        
+        sections.append("")
         return "\n".join(sections)
+
 
     def _create_report_sections(self, **data) -> List[ReportSection]:
         """Create all report sections from analyzed data"""
@@ -246,27 +342,37 @@ class EnhancedReportFormatter:
             order=3
         ))
         
+        # Timing analysis (new section)
+        if 'timing_analysis' in data:
+            sections.append(ReportSection(
+                title="Análisis de Tiempos",
+                content=self._format_timing_section(data['timing_analysis']),
+                order=4
+            ))
+        
         # Problems and solutions
         sections.append(ReportSection(
             title="Problemas y Soluciones",
             content=self._format_problems_section(data['construction_analysis']),
-            order=4
+            order=5
         ))
         
         # Chronogram
-        sections.append(ReportSection(
-            title="Cronograma del Proyecto",
-            content=data['chronogram'],
-            type="mermaid",
-            order=5
-        ))
+        if 'chronogram' in data:
+            sections.append(ReportSection(
+                title="Cronograma del Proyecto",
+                content=data['chronogram'],
+                type="mermaid",
+                order=6
+            ))
         
         # Follow-up items
         sections.append(ReportSection(
             title="Tareas Pendientes",
             content=self._format_follow_up_section(data),
-            order=6
+            order=7
         ))
+        
         return sorted(sections, key=lambda s: s.order)
     
     def _convert_to_schedule_graph(self, timing_data: Dict) -> ScheduleGraph:
