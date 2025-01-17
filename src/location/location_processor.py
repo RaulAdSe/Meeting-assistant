@@ -23,39 +23,67 @@ class LocationProcessor:
         self.client = openai.OpenAI(api_key=api_key)
 
 # Assuming `transcript_data` contains word-level timestamps from the transcription service
-    def assign_timestamps_to_locations(transcript_data, extracted_locations):
+    def _normalize_location_entry(self, loc: Dict) -> Dict:
+        """
+        Normalize a location entry to ensure it has both location and sublocation.
+        If only sublocation is present, use it as the location.
+        """
+        normalized = {
+            "location": loc.get("location", loc.get("sublocation", "Unknown")),
+            "sublocation": loc.get("sublocation", "Unknown Sublocation")
+        }
+        # If we used sublocation as location, make sublocation unknown
+        if "location" not in loc and "sublocation" in loc:
+            normalized["sublocation"] = "Unknown Sublocation"
+        return normalized
+
+    def assign_timestamps_to_locations(self, transcript_data, extracted_locations):
         """
         Assigns timestamps to locations based on when they appear in the transcript.
+        
+        Args:
+            transcript_data: List of dicts with 'text' and 'timestamp' keys
+            extracted_locations: List of dicts with location information
+        
+        Returns:
+            List of LocationChange objects with assigned timestamps
         """
+        if not transcript_data:
+            return []
+
         location_changes = []
+        default_timestamp = transcript_data[0]["timestamp"] if transcript_data else datetime.now()
 
         for loc in extracted_locations:
+            # Normalize the location entry
+            normalized_loc = self._normalize_location_entry(loc)
             matched_timestamp = None
+            location_text = normalized_loc["location"].lower()
 
             # Search for the first occurrence of the location in the transcript data
             for entry in transcript_data:
-                if loc["location"].lower() in entry["text"].lower():
+                entry_text = entry["text"].lower()
+                if location_text in entry_text:
                     matched_timestamp = entry["timestamp"]
-                    break  # Stop at the first match
+                    break
 
-            # If no timestamp is found, use first available timestamp
-            if not matched_timestamp and transcript_data:
-                matched_timestamp = transcript_data[0]["timestamp"]
-
+            # Create LocationChange with matched or default timestamp
             location_changes.append(LocationChange(
-                timestamp=matched_timestamp,
-                area=loc["location"],
-                sublocation=loc.get("sublocation", "Unknown Sublocation")
+                timestamp=matched_timestamp or default_timestamp,
+                area=normalized_loc["location"],
+                sublocation=normalized_loc["sublocation"]
             ))
 
         return location_changes
 
-    def process_transcript(self, transcript_text: str, transcript_data: List[Dict]) -> Dict:
+
+    def process_transcript(self, transcript_text: str, transcript_data: Optional[List[Dict]] = None) -> Dict:
         """
         Processes the transcript, identifying the main site and tracking location changes.
         Uses actual timestamps from transcript_data instead of AI-generated timestamps.
         """
         prompt = self._create_location_prompt(transcript_text)
+        transcript_data = transcript_data or []
 
         try:
             response = self.client.chat.completions.create(
@@ -63,7 +91,7 @@ class LocationProcessor:
                 messages=[{
                     "role": "system",
                     "content": "Eres un analizador de ubicaciones de sitios de construcción. Extrae el sitio principal de construcción "
-                            "y rastrea los nombres de áreas mencionadas, pero no asigna marcas de tiempo."
+                            "y rastrea los nombres de áreas mencionadas, pero no asignas marcas de tiempo."
                 }, {
                     "role": "user",
                     "content": prompt
@@ -81,7 +109,7 @@ class LocationProcessor:
                                     "location": {"type": "string"}
                                 }
                             },
-                            "locations": {  # No timestamps here!
+                            "locations": {
                                 "type": "array",
                                 "items": {
                                     "type": "object",
@@ -99,7 +127,6 @@ class LocationProcessor:
             )
 
             result = json.loads(response.choices[0].message.function_call.arguments)
-
             print("DEBUG: Raw AI response data (before processing):")
             print(result)
 
@@ -109,11 +136,22 @@ class LocationProcessor:
                 site=result['main_site']['location']
             )
 
-            # Extract locations without timestamps
+          # Extract locations directly from the result
             extracted_locations = result.get('locations', [])
+            
+            # Print debug info
+            if extracted_locations:
+                print("Extracted locations:")
+                for loc in extracted_locations:
+                    print(f"- {loc.get('location', 'Unknown')}: {loc.get('sublocation', 'No sublocation')}")
 
-            # Assign timestamps using transcript data
+            # Assign timestamps
             location_changes = self.assign_timestamps_to_locations(transcript_data, extracted_locations)
+
+            if location_changes:
+                print("\nCreated location changes:")
+                for change in location_changes:
+                    print(f"- {change.area} at {change.timestamp}")
 
             return {
                 'main_site': main_site,
@@ -122,6 +160,8 @@ class LocationProcessor:
 
         except Exception as e:
             print(f"Error processing locations: {str(e)}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
             return {
                 'main_site': Location(company="Unknown", site="Unknown"),
                 'location_changes': []

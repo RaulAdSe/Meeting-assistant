@@ -9,6 +9,7 @@ from .config import ROOT_DIR, OUTPUT_DIR
 from .audio_processor import AudioProcessor
 import logging
 from .speakers.manager import SpeakerManager  # Import SpeakerManager
+from datetime import datetime  
 
 class EnhancedTranscriber:
     def __init__(self, model_name: str = "openai/whisper-base", verbose: bool = False):
@@ -109,29 +110,40 @@ class EnhancedTranscriber:
         try:
             temp_path = self.audio_processor.preprocess(audio_path)
             
+            # Get audio file creation time
+            audio_start_time = datetime.fromtimestamp(Path(audio_path).stat().st_ctime)
+            
             result = {
                 "transcript": None,
                 "diarization": None,
                 "aligned_transcript": None,
                 "metadata": {
                     "model": self.model_name,
-                    "audio_path": audio_path
+                    "audio_path": audio_path,
+                    "start_time": audio_start_time,
+                    "processed_at": datetime.now()
                 }
             }
 
             # Perform transcription
             transcription = self.transcriber(
                 temp_path,
-                return_timestamps="word"
-                )
+                return_timestamps="word"  # Request word-level timestamps
+            )
             
             result["transcript"] = {"text": transcription["text"]}
             
-            # Store chunks for alignment
+            # Store chunks with their timestamps
             chunks = transcription.get('chunks', [])
             if not chunks and transcription.get('text'):
-                # If no chunks, create a single chunk
-                chunks = [{'text': transcription['text'], 'timestamp': [0, -1]}]
+                # If no chunks, create a single chunk with start time
+                chunks = [{
+                    'text': transcription['text'], 
+                    'timestamp': [0, -1],
+                    'start_time': audio_start_time
+                }]
+
+            result['chunks'] = chunks
 
             # Perform diarization
             if self.diarization_pipeline:
@@ -199,16 +211,71 @@ class EnhancedTranscriber:
                     f.write(result["transcript"]["text"])
                     f.write("\n\n")
 
-    def get_transcript_data(transcription_result):
+    def get_transcript_data(self, transcription_result):
         """
-        Extracts structured transcript data from Whisper transcription output.
+        Extracts structured transcript data from Whisper transcription output with accurate timing.
+        Returns timing information and text for each segment based on audio timestamps.
+        
+        Args:
+            transcription_result: The output from Whisper transcription
+            
+        Returns:
+            List of dicts containing text and timestamp for each segment
         """
         transcript_data = []
         
-        for chunk in transcription_result.get("chunks", []):
+        # Get the starting time of the audio from metadata if available
+        audio_start_time = None
+        if 'metadata' in transcription_result and 'start_time' in transcription_result['metadata']:
+            audio_start_time = transcription_result['metadata']['start_time']
+        else:
+            # If no metadata, use audio file creation time or default to current
+            if 'audio_path' in transcription_result.get('metadata', {}):
+                try:
+                    audio_path = transcription_result['metadata']['audio_path']
+                    audio_start_timestamp = Path(audio_path).stat().st_ctime  # Get file creation time as a timestamp
+                    audio_start_time = datetime.fromtimestamp(audio_start_timestamp)
+                except (OSError, ValueError):
+                    audio_start_time = datetime.now()
+            else:
+                audio_start_time = datetime.now()
+
+        # Handle chunk-based responses
+        if "chunks" in transcription_result:
+            for chunk in transcription_result.get("chunks", []):
+                if isinstance(chunk, dict) and "timestamp" in chunk:
+                    # Get the start time in seconds from the audio
+                    start_seconds = chunk["timestamp"][0]
+                    
+                    # Manually compute actual datetime by adding seconds
+                    segment_time = datetime.fromtimestamp(audio_start_time.timestamp() + start_seconds)
+
+                    transcript_data.append({
+                        "text": chunk["text"].strip(),
+                        "timestamp": segment_time,
+                        "offset_seconds": start_seconds  # Keep the original offset for reference
+                    })
+
+        # Handle word-level timestamps if available
+        elif "words" in transcription_result:
+            for word in transcription_result.get("words", []):
+                if isinstance(word, dict) and "timestamp" in word:
+                    word_time = datetime.fromtimestamp(audio_start_time.timestamp() + word["timestamp"])
+                    transcript_data.append({
+                        "text": word["text"].strip(),
+                        "timestamp": word_time,
+                        "offset_seconds": word["timestamp"]
+                    })
+
+        # Fall back to full text with start time
+        elif "text" in transcription_result:
             transcript_data.append({
-                "text": chunk["text"],
-                "timestamp": chunk["timestamp"][0]  # Use start timestamp
+                "text": transcription_result["text"].strip(),
+                "timestamp": audio_start_time,
+                "offset_seconds": 0
             })
+
+        # Sort data by timestamp
+        transcript_data.sort(key=lambda x: x["timestamp"])
         
         return transcript_data

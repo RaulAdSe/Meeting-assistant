@@ -77,45 +77,52 @@ class EnhancedReportFormatter:
     ---
     """
 
-    def _format_executive_summary(self, analysis: Dict) -> str:
+    def _format_executive_summary(self, construction_analysis: Dict) -> str:
         """Format the executive summary section"""
-        summary = analysis.get('executive_summary', 'No summary available')
-        vision_general = analysis.get('vision_general', {})
+        summary = construction_analysis.get('executive_summary', 'No summary available.')
+        confidence = construction_analysis.get('confidence_scores', {}).get('overall', 0)
+        vision_general = construction_analysis.get('vision_general', {})
+        areas_visitadas = vision_general.get('areas_visitadas', [])
 
-        # Include confidence score if available
-        confidence = analysis.get("confidence_scores", {}).get("overall", None)
-        confidence_text = f"\n\n**Nivel de confianza:** {confidence * 100:.1f}%" if confidence is not None else ""
-
-        # Format areas visited
         areas_section = []
-        for area in vision_general.get('areas_visitadas', []):
-            areas_section.append(f"\n### {area['area']}\n")
+        if areas_visitadas:
+            for area in areas_visitadas:
+                # Add area heading
+                areas_section.append(f"\n### {area['area']}\n")
 
-            if area.get('observaciones_clave'):
-                areas_section.append("**Observaciones Clave:**")
-                for obs in area['observaciones_clave']:
-                    areas_section.append(f"- {obs}")
+                # Add key observations if present
+                if area.get('observaciones_clave'):
+                    areas_section.append("**Observaciones Clave:**")
+                    for obs in area['observaciones_clave']:
+                        areas_section.append(f"- {obs}")
 
-            if area.get('problemas_identificados'):
-                areas_section.append("\n**Problemas Identificados:**")
-                for prob in area['problemas_identificados']:
-                    areas_section.append(f"- {prob}")
+                # Add identified problems if present
+                if area.get('problemas_identificados'):
+                    areas_section.append("\n**Problemas Identificados:**")
+                    for prob in area['problemas_identificados']:
+                        areas_section.append(f"- {prob}")
 
-            areas_section.append("\n")
+                areas_section.append("\n")
+        else:
+            areas_section = ["No se visitaron áreas"]
 
-        areas_text = "\n".join(areas_section) if areas_section else "No se visitaron áreas"
+        areas_text = "\n".join(areas_section)
 
-        return f"""## Resumen Ejecutivo
+        formatted_summary = f"""## Resumen Ejecutivo
 
-        {summary}
+            {summary}
 
-        ### Áreas Visitadas
-        {areas_text}
+            ### Áreas Visitadas
+            {areas_text}
 
-        {confidence_text}
+            """
 
-        ---"""
+        if confidence:
+            formatted_summary += f"\n**Nivel de confianza:** {confidence*100:.1f}%\n"
 
+        formatted_summary += "\n        ---"
+
+        return formatted_summary
     
     def _format_problems_section(self, analysis: Dict) -> str:
         """Format the problems and solutions section"""
@@ -142,29 +149,46 @@ class EnhancedReportFormatter:
     def _format_follow_up_section(self, data: Dict) -> str:
         """Format the follow-up items section"""
         sections = ["## Tareas Pendientes\n"]
-        print(f"DEBUG: Follow-up tasks in analysis -> {data.get('follow_up_required', [])}")
 
-        # Ensure we access the correct key in the analysis result
-        tasks = data.get("follow_up_required", [])  # Adapted for enhanced_formatter
+        # Try to get follow-up tasks first from analysis_data if provided
+        follow_ups = []
+        if data.get('follow_up_required'):
+            follow_ups = data['follow_up_required']
+        elif data.get('construction_analysis', {}).get('tareas_pendientes'):
+            follow_ups = data['construction_analysis']['tareas_pendientes']
 
-        if tasks:
-            for item in tasks:
-                sections.append(f"### {item.get('tarea', 'Tarea no especificada')}")
-                sections.append(f"- **Ubicación:** {item.get('ubicacion', 'Ubicación no especificada')}")
-                sections.append(f"- **Asignado a:** {item.get('asignado_a', 'No asignado')}")
-                sections.append(f"- **Prioridad:** {item.get('prioridad', 'No especificada')}")
-                sections.append(f"- **Plazo:** {item.get('plazo', 'Sin fecha definida')}\n")
+        print(f"DEBUG: Follow-up tasks in analysis -> {follow_ups}")
+
+        if follow_ups:
+            for item in follow_ups:
+                # Handle both naming conventions (Spanish and English)
+                task_name = item.get('tarea') or item.get('task', 'Unknown Task')
+                location = item.get('ubicacion') or item.get('location', 'Unknown Location')
+                assigned = item.get('asignado_a') or item.get('assigned_to', 'Unassigned')
+                priority = item.get('prioridad') or item.get('priority', 'Normal')
+                deadline = item.get('plazo') or item.get('deadline', 'Not specified')
+
+                sections.extend([
+                    f"### {task_name}",
+                    f"- **Ubicación:** {location}",
+                    f"- **Asignado a:** {assigned}",
+                    f"- **Prioridad:** {priority}",
+                    f"- **Plazo:** {deadline}\n"
+                ])
 
             # Add general observations if present
-            if "observaciones_generales" in data:
-                sections.append("### Observaciones Generales")
-                for obs in data["observaciones_generales"]:
-                    sections.append(f"- {obs}\n")
-        else:
-            sections.append("No hay tareas pendientes registradas.\n")
+            if data.get('observaciones_generales') or data.get('general_observations'):
+                observations = data.get('construction_analysis', {}).get('observaciones_generales', []) or \
+                   data.get('general_observations', [])
+                if observations:
+                    sections.append("### Observaciones Generales")
+                    for obs in observations:
+                        sections.append(f"- {obs}\n")
+
+        if not follow_ups and not observations:
+                sections.append("\nNo hay tareas pendientes registradas.\n")
 
         return "\n".join(sections)
-
 
     def _format_location_analysis(self, location_data: Dict) -> str:
         """Format the location analysis section"""

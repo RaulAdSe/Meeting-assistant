@@ -285,7 +285,11 @@ class EnhancedBatchTranscriber:
             
             transcript_data = self.get_transcript_data(transcript_result)
             
-            location_data = self.location_processor.process_transcript(transcript_text, transcript_data)
+            # Process location with timing data
+            location_data = self.location_processor.process_transcript(
+                transcript_text=transcript_text,
+                transcript_data=transcript_data
+            )
                 
             # Create or get location - this will return a Location object
             location = self._handle_location(location_data=location_data)
