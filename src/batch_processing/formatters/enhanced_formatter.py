@@ -157,8 +157,6 @@ class EnhancedReportFormatter:
         elif data.get('construction_analysis', {}).get('tareas_pendientes'):
             follow_ups = data['construction_analysis']['tareas_pendientes']
 
-        print(f"DEBUG: Follow-up tasks in analysis -> {follow_ups}")
-
         if follow_ups:
             for item in follow_ups:
                 # Handle both naming conventions (Spanish and English)
@@ -176,17 +174,20 @@ class EnhancedReportFormatter:
                     f"- **Plazo:** {deadline}\n"
                 ])
 
-            # Add general observations if present
-            if data.get('observaciones_generales') or data.get('general_observations'):
-                observations = data.get('construction_analysis', {}).get('observaciones_generales', []) or \
-                   data.get('general_observations', [])
-                if observations:
-                    sections.append("### Observaciones Generales")
-                    for obs in observations:
-                        sections.append(f"- {obs}\n")
+        # Add general observations - correctly access from construction_analysis
+        observations = []
+        if data.get('construction_analysis', {}).get('observaciones_generales'):
+            observations = data['construction_analysis']['observaciones_generales']
+        elif data.get('general_observations'):
+            observations = data['general_observations']
+
+        if observations:
+            sections.append("### Observaciones Generales")
+            for obs in observations:
+                sections.append(f"- {obs}\n")
 
         if not follow_ups and not observations:
-                sections.append("\nNo hay tareas pendientes registradas.\n")
+            sections.append("\nNo hay tareas pendientes registradas.\n")
 
         return "\n".join(sections)
 
