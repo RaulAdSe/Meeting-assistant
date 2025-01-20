@@ -156,7 +156,7 @@ def sample_transcript_text():
     10:15 AM - Área Principal
     Juan: Hemos identificado una grieta estructural importante en la pared norte del edificio A.
     María: La grieta parece tener unos 2 metros de largo y necesita atención inmediata.
-    Carlos: Necesitaremos reforzar la estructura. Estimo unos 3 días para la reparación.
+    Carlos: Necesitaremos reforzar la estructura. Estimo unos 3 días para la reparación. Esto lo va a hacer Miguel.
     
     10:30 AM - Área de Instalaciones
     Sara: El sistema eléctrico está completo al 80%.

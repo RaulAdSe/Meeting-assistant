@@ -124,51 +124,64 @@ class EnhancedReportFormatter:
 
         return formatted_summary
     
+
     def _format_problems_section(self, analysis: Dict) -> str:
         """Format the problems and solutions section"""
+
+        SEVERITY_MAPPING = {
+    "low": "baja",
+    "medium": "media",
+    "high": "alta",
+    "critical": "crítica"
+}
+
         sections = ["## Problemas y Soluciones\n"]
         
-        # Handle direct technical findings first
+        # Manejar primero los hallazgos técnicos directos
         if analysis.get('hallazgos_tecnicos'):
             for finding in analysis['hallazgos_tecnicos']:
-                sections.append(f"### Problem in {finding['ubicacion']}")
-                sections.append(f"**Severity:** {finding['severidad']}")
-                sections.append(f"**Description:** {finding['hallazgo']}")
+                sections.append(f"### Problema en {finding['ubicacion']}")
+                severity_es = SEVERITY_MAPPING.get(finding['severidad'].lower(), finding['severidad'])  # Mapear severidad
+                sections.append(f"**Severidad:** {severity_es}")
+                sections.append(f"**Descripción:** {finding['hallazgo']}")
                 if 'accion_recomendada' in finding:
-                    sections.append(f"**Recommended Action:** {finding['accion_recomendada']}")
+                    sections.append(f"**Acción Recomendada:** {finding['accion_recomendada']}")
                 sections.append("")
         
-        # Handle safety concerns
+        # Manejar preocupaciones de seguridad
         if analysis.get('preocupaciones_seguridad'):
-            sections.append("### Safety Concerns")
+            sections.append("### Preocupaciones de Seguridad")
             for concern in analysis['preocupaciones_seguridad']:
-                sections.append(f"**Location:** {concern['ubicacion']}")
-                sections.append(f"**Concern:** {concern['preocupacion']}")
-                sections.append(f"**Priority:** {concern['prioridad']}")
-                sections.append(f"**Mitigation:** {concern['mitigacion']}")
+                sections.append(f"**Ubicación:** {concern['ubicacion']}")
+                sections.append(f"**Preocupación:** {concern['preocupacion']}")
+                severity_es = SEVERITY_MAPPING.get(concern['prioridad'].lower(), concern['prioridad'])  # Mapear severidad
+                sections.append(f"**Prioridad:** {severity_es}")
+                sections.append(f"**Mitigación:** {concern['mitigacion']}")
                 sections.append("")
         
-        # Then handle formal Problem objects if present
+        # Luego manejar objetos formales de Problema si están presentes
         if analysis.get('problems'):
             for problem in analysis['problems']:
-                sections.append(f"### Problem in {problem.location_context.area}")
-                sections.append(f"**Severity:** {problem.severity.value}")
-                sections.append(f"**Description:** {problem.description}")
+                sections.append(f"### Problema en {problem.location_context.area}")
+                severity_es = SEVERITY_MAPPING.get(problem.severity.value.lower(), problem.severity.value)  # Mapear severidad
+                sections.append(f"**Severidad:** {severity_es}")
+                sections.append(f"**Descripción:** {problem.description}")
                 
-                # Add solutions for this problem
+                # Agregar soluciones para este problema
                 if analysis.get('solutions') and problem.id in analysis['solutions']:
                     problem_solutions = analysis['solutions'][problem.id]
-                    sections.append("\n**Proposed Solutions:**")
+                    sections.append("\n**Soluciones Propuestas:**")
                     for solution in problem_solutions:
                         sections.append(f"- {solution.description}")
                         if solution.estimated_time:
-                            sections.append(f"  - Estimated time: {solution.estimated_time} minutes")
+                            sections.append(f"  - Tiempo estimado: {solution.estimated_time} minutos")
                 sections.append("")
         
-        if len(sections) == 1:  # Only header present
+        if len(sections) == 1:  # Solo el encabezado presente
             sections.append("No se han identificado problemas en esta visita.\n")
         
         return "\n".join(sections)
+
 
     def _get_task_properties(self, task) -> tuple:
         """Extract task properties safely whether task is a dict or Task object"""
@@ -189,10 +202,10 @@ class EnhancedReportFormatter:
             )
 
     def _format_timing_section(self, task_data: Dict) -> str:
-        """Format the timing analysis section"""
-        sections = ["## Timing Analysis\n"]
+        """Formatear la sección de análisis de tiempos"""
+        sections = ["## Análisis Temporal\n"]
         
-        # Add detailed timing information
+        # Agregar información detallada sobre los tiempos
         tasks = []
         if isinstance(task_data, ScheduleGraph):
             tasks = list(task_data.tasks.values())
@@ -202,11 +215,11 @@ class EnhancedReportFormatter:
         if not tasks:
             return ""
 
-        sections.append("### Task Durations and Dependencies\n")
+        sections.append("### Duraciones de Tareas y Dependencias\n")
         for task in tasks:
             name, duration_data, can_parallel, dependencies = self._get_task_properties(task)
 
-            # Format duration
+            # Formatear la duración
             duration_str = None
             if isinstance(duration_data, dict):
                 amount = duration_data.get('amount')
@@ -216,19 +229,19 @@ class EnhancedReportFormatter:
             elif isinstance(duration_data, Duration):
                 duration_str = f"{duration_data.amount} {duration_data.unit}"
 
-            # Build section content
+            # Construir el contenido de la sección
             if duration_str:
                 sections.append(f"- **{name}:** {duration_str}")
                 
-            # Add dependencies
+            # Agregar dependencias
             if dependencies:
-                sections.append(f"  - Depends on: {', '.join(str(d) for d in dependencies)}")
+                sections.append(f"  - Depende de: {', '.join(str(d) for d in dependencies)}")
                 
-            # Add parallel execution info
+            # Indicar si se puede ejecutar en paralelo
             if can_parallel:
-                sections.append("  - Can be executed in parallel")
+                sections.append("  - Puede ejecutarse en paralelo")
                 
-        sections.append("")  # Add spacing at the end
+        sections.append("")  # Agregar espacio al final
         return "\n".join(sections)
 
 
