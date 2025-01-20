@@ -5,11 +5,11 @@ from enum import Enum
 import uuid
 
 class TaskStatus(str, Enum):
-    PENDING = "pending"
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-    DELAYED = "delayed"
-    BLOCKED = "blocked"
+    PENDING = "pendiente"
+    IN_PROGRESS = "en_progreso"
+    COMPLETED = "completado"
+    DELAYED = "retrasado"
+    BLOCKED = "bloqueado"
 
 class TaskPriority(str, Enum):
     HIGH = "high"
@@ -26,9 +26,16 @@ class TaskRelationType(str, Enum):
 
 @dataclass
 class Duration:
-    amount: float
-    unit: str
+    amount: Optional[float]
+    unit: Optional[str]
     
+    def __post_init__(self):
+        # Set default values if None
+        if self.amount is None:
+            self.amount = 1.0
+        if self.unit is None:
+            self.unit = "dias"
+            
     def to_days(self) -> float:
         """Convert duration to days, supporting both English and Spanish units"""
         unit = self.unit.lower()

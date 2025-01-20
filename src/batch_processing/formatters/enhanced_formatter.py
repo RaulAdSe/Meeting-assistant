@@ -81,32 +81,33 @@ class EnhancedReportFormatter:
         """Format the executive summary section"""
         summary = construction_analysis.get('executive_summary', 'No summary available.')
         confidence = construction_analysis.get('confidence_scores', {}).get('overall', 0)
-        vision_general = construction_analysis.get('vision_general', {})
+        vision_general = construction_analysis.get('metadata', {}).get('vision_general', {})
         areas_visitadas = vision_general.get('areas_visitadas', [])
 
         areas_section = []
         if areas_visitadas:
+            self.logger.debug(f"Number of areas visited: {len(areas_visitadas)}")
             for area in areas_visitadas:
-                # Add area heading
+                self.logger.debug(f"Processing area: {area['area']}")
                 areas_section.append(f"\n### {area['area']}\n")
-
-                # Add key observations if present
                 if area.get('observaciones_clave'):
+                    self.logger.debug(f"Observaciones Clave found for area: {area['area']}")
                     areas_section.append("**Observaciones Clave:**")
                     for obs in area['observaciones_clave']:
                         areas_section.append(f"- {obs}")
-
-                # Add identified problems if present
                 if area.get('problemas_identificados'):
+                    self.logger.debug(f"Problemas Identificados found for area: {area['area']}")
                     areas_section.append("\n**Problemas Identificados:**")
                     for prob in area['problemas_identificados']:
                         areas_section.append(f"- {prob}")
-
                 areas_section.append("\n")
         else:
+            self.logger.debug("No areas visited")
             areas_section = ["No se visitaron áreas"]
 
         areas_text = "\n".join(areas_section)
+
+        self.logger.debug(f"Areas visitadas content: {areas_text}")
 
         formatted_summary = f"""## Resumen Ejecutivo
 
@@ -497,7 +498,8 @@ class EnhancedReportFormatter:
                 )
 
                 construction_analysis = {
-                    'executive_summary': analysis_result.metadata.get('executive_summary', 'No summary available'),                    'problems': analysis_result.problems,
+                    'executive_summary': analysis_result.metadata.get('executive_summary', 'No summary available'),                    
+                    'problems': analysis_result.problems,
                     'solutions': analysis_result.solutions,
                     'confidence_scores': analysis_result.confidence_scores,
                     'metadata': analysis_result.metadata

@@ -1,6 +1,7 @@
 from typing import List, Dict, Any, Optional
 import uuid
 import time
+import logging
 from datetime import datetime
 
 from .models import (
@@ -19,6 +20,7 @@ class ConstructionExpert:
         self.visit_history = VisitHistoryService()
         self.location_processor = LocationProcessor()
         self.llm_service = LLMService()
+        self.logger = logging.getLogger(__name__)
 
     def analyze_visit(
         self,
@@ -52,6 +54,23 @@ class ConstructionExpert:
                 location_data=location_data,
                 metadata=metadata
             )
+
+            # Structure visited areas 
+            areas_visitadas = []
+            for location in location_data.get('locations', []):  # Use the locations from raw data
+                area = location.get('location') or location.get('sublocation')
+                if area:
+                    areas_visitadas.append({
+                        'area': area,
+                        'observaciones_clave': [],
+                        'problemas_identificados': []
+                    })
+            
+            # Add structured data to llm_analysis
+            vision_general = {
+                'areas_visitadas': areas_visitadas,
+                'obra_principal': location_data.get('main_site', {})
+            }
             
             # Get LLM analysis of transcript
             print("ConstructionExpert: Analyzing visit with ID:", visit_id)
@@ -61,6 +80,14 @@ class ConstructionExpert:
                 session_info={"session_id": str(visit_id)},
                 location_data=location_data
             )
+
+                # Make sure vision_general includes areas_visitadas
+            if 'vision_general' not in llm_analysis:
+                llm_analysis['vision_general'] = {}
+            llm_analysis['vision_general']['areas_visitadas'] = areas_visitadas
+                
+            self.logger.debug(f"Structured visited areas: {areas_visitadas}")
+            self.logger.debug(f"Final vision_general content: {llm_analysis['vision_general']}")
             
             # Extract problems from LLM analysis
             problems = self._identify_problems(llm_analysis, context)
@@ -88,7 +115,8 @@ class ConstructionExpert:
                 metadata={
                     "llm_analysis_id": llm_analysis.get("metadata", {}).get("analysis_id"),
                     "location_data": location_data,
-                    "executive_summary": executive_summary  # Add this line
+                    "executive_summary": executive_summary,
+                    "vision_general": vision_general  # Use our structured vision_general
                 }
             )
             

@@ -6,6 +6,9 @@ from src.batch_processing.processors.enhanced_batch_transcriber import EnhancedB
 from src.batch_processing.formatters.enhanced_formatter import EnhancedReportFormatter
 from src.batch_processing.models.session import AudioSession, AudioFile
 
+import logging
+import json
+
 @pytest.fixture
 def sample_timing_data():
     """Create sample timing analysis data"""
@@ -60,6 +63,12 @@ def sample_analysis():
 @pytest.mark.asyncio
 async def test_batch_to_report_integration(tmp_path, sample_analysis, sample_timing_data):
     """Test the integration between batch processing and report formatting"""
+
+    logging.basicConfig(level=logging.DEBUG)
+    logger = logging.getLogger(__name__)
+    
+    # Log the sample_analysis structure
+    logger.debug(f"Sample analysis structure: {json.dumps(sample_analysis, indent=2)}")
     # Initialize components
     formatter = EnhancedReportFormatter()
 
@@ -79,6 +88,10 @@ async def test_batch_to_report_integration(tmp_path, sample_analysis, sample_tim
             'company': 'Test Company',
             'site': 'Test Site'
         },
+        'locations': [
+            {'location': 'Test Area', 'sublocation': None},
+            {'location': 'Area 2', 'sublocation': None}
+        ],
         'location_changes': []
     }
     
@@ -249,3 +262,5 @@ async def test_transcript_processing_and_report_generation(sample_transcript_tex
     except Exception as e:
         print(f"\nTest failed with error: {str(e)}")
         raise
+
+

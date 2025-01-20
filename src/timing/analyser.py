@@ -452,7 +452,11 @@ class TaskAnalyzer:
         for task_data in response.get('tasks', []):
             # Add default values and handle missing duration data safely
             duration_data = task_data.get('duration', {'amount': 1, 'unit': 'days'})
+
+            # Ensure responsible person is captured
+            responsible = task_data.get('responsible') or task_data.get('assignee')
             
+
             # Ensure confidence is a float if present
             confidence = task_data.get('confidence')
             if confidence is not None:
