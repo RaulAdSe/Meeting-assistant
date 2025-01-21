@@ -41,40 +41,47 @@ class EnhancedReportFormatter:
         visit_id: uuid.UUID,
         location_id: uuid.UUID,
         output_dir: Path,
+        analysis_data: Optional[Dict[str, Any]] = None,
         start_date: Optional[datetime] = None
     ) -> Dict[str, Path]:
-        """
-        Generate a comprehensive report integrating all analyses.
-        
-        Args:
-            transcript_text: Raw transcript text
-            visit_id: UUID of the current visit
-            location_id: UUID of the construction site location
-            output_dir: Directory to save the report
-            start_date: Optional start date for chronogram
-            
-        Returns:
-            Dictionary with paths to generated report files
-        """
+        """Generate a comprehensive report integrating all analyses."""
         try:
+            logger = logging.getLogger(__name__)
+            
             # Process location data
             self.logger.info("Processing location data...")
             location_data = self.location_processor.process_transcript(transcript_text)
+            logger.debug(f"Location data processed: {location_data}")
             
-            # Get construction analysis
-            self.logger.info("Analyzing construction aspects...")
-            construction_analysis = self.construction_expert.analyze_visit(
-                visit_id=visit_id,
-                transcript_text=transcript_text,
-                location_id=location_id
-            )
-            
-            # Get timing analysis
+            # Use provided analysis data or generate new analysis
+            if analysis_data:
+                construction_analysis = analysis_data
+                logger.debug(f"Using provided analysis data: {analysis_data}")
+            else:
+                # Generate new analysis
+                logger.info("Generating new construction analysis...")
+                analysis_result = self.construction_expert.analyze_visit(
+                    visit_id=visit_id,
+                    transcript_text=transcript_text,
+                    location_id=location_id
+                )
+                construction_analysis = {
+                    'executive_summary': analysis_result.metadata.get('executive_summary', 'No summary available'),
+                    'problems': analysis_result.problems,
+                    'solutions': analysis_result.solutions,
+                    'confidence_scores': analysis_result.confidence_scores,
+                    'metadata': analysis_result.metadata,
+                    'hallazgos_tecnicos': analysis_result.metadata.get('hallazgos_tecnicos', [])
+                }
+                logger.debug(f"Generated construction analysis: {construction_analysis}")
+
+            # Process timing analysis
             self.logger.info("Analyzing timing and tasks...")
-            timing_analysis = self.task_analyzer.analyze_transcript(
+            timing_data = self.task_analyzer.analyze_transcript(
                 transcript_text=transcript_text,
                 location_id=location_id
             )
+            timing_analysis = self._convert_to_schedule_graph(timing_data)
             
             # Generate chronogram
             self.logger.info("Generating chronogram visualization...")
@@ -91,16 +98,50 @@ class EnhancedReportFormatter:
                 chronogram=chronogram
             )
             
+            # Debug log the sections
+            for section in sections:
+                logger.debug(f"Section {section.title}:")
+                logger.debug(section.content[:200] + "..." if len(section.content) > 200 else section.content)
+
+            # Generate the markdown content
+            markdown_content = self._generate_markdown(sections)
+            logger.info("Generated markdown content")
+            
             # Generate report files
-            return await self._generate_report_files(
-                sections=sections,
-                output_dir=output_dir,
-                metadata={
-                    "visit_id": str(visit_id),
-                    "location_id": str(location_id),
-                    "generated_at": datetime.now().isoformat()
-                }
-            )
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Generate markdown
+            markdown_path = output_dir / "report.md"
+            markdown_path.write_text(markdown_content, encoding='utf-8')
+            logger.info(f"Wrote markdown to {markdown_path}")
+            
+            # Generate PDF
+            pdf_path = output_dir / "report.pdf"
+            await self._generate_pdf(markdown_content, pdf_path)
+            logger.info(f"Generated PDF at {pdf_path}")
+            
+            # Save metadata
+            metadata_path = output_dir / "report_metadata.json"
+            metadata = {
+                "visit_id": str(visit_id),
+                "location_id": str(location_id),
+                "generated_at": datetime.now().isoformat(),
+                "sections": [
+                    {
+                        "title": section.title,
+                        "type": section.type,
+                        "order": section.order
+                    }
+                    for section in sections
+                ]
+            }
+            metadata_path.write_text(json.dumps(metadata, indent=2))
+            
+            return {
+                "markdown": markdown_path,
+                "pdf": pdf_path,
+                "metadata": metadata_path
+            }
             
         except Exception as e:
             self.logger.error(f"Error generating report: {str(e)}")

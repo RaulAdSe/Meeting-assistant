@@ -156,6 +156,7 @@ class EnhancedBatchTranscriber:
 
 
     async def process_session(self, session: AudioSession) -> Dict[str, Any]:
+        """Process all files in a session with enhanced analysis caching."""
         try:
             # Create output directory for session
             output_dir = Path("reports") / session.session_id
@@ -172,7 +173,7 @@ class EnhancedBatchTranscriber:
 
             session_results = {
                 'session_id': session.session_id,
-                'location': location.name,  # Use the location name from the location object
+                'location': location.name,
                 'start_time': session.start_time.isoformat(),
                 'analyses': [],
                 'transcripts': [],
@@ -180,32 +181,31 @@ class EnhancedBatchTranscriber:
                     'total_files': len(session.files),
                     'total_duration': session.total_duration,
                     'notes': session.notes,
-                    'location_id': str(location_id)  # Convert UUID to string
+                    'location_id': str(location_id)
                 },
                 'output_dir': str(output_dir)
             }
 
-            # Process each file sequentially
+            # Process files sequentially
             all_transcripts = []
             for audio_file in session.files:
                 self.logger.info(f"Processing file: {audio_file.path}")
                 try:
-                    # Process audio and get analysis
-                    result = self.process_audio(str(audio_file.path))
-                    session_results['analyses'].append(result)
+                    # Process audio and get transcript
+                    transcript_result = self.transcriber.process_audio(str(audio_file.path))
                     
-                    if 'transcript' in result:
+                    if 'transcript' in transcript_result:
                         transcript_data = {
-                            'text': result['transcript']['text'],
+                            'text': transcript_result['transcript']['text'],
                             'file': str(audio_file.path),
                             'duration': audio_file.duration
                         }
                         session_results['transcripts'].append(transcript_data)
-                        all_transcripts.append(result['transcript']['text'])
+                        all_transcripts.append(transcript_result['transcript']['text'])
                         
                         transcript_path = output_dir / f"{Path(audio_file.path).stem}_transcript.txt"
                         with open(transcript_path, "w", encoding="utf-8") as f:
-                            f.write(result['transcript']['text'])
+                            f.write(transcript_result['transcript']['text'])
                     
                     audio_file.processed = True
                     
@@ -216,37 +216,50 @@ class EnhancedBatchTranscriber:
             if not session_results['transcripts']:
                 raise ValueError("No transcripts were successfully processed")
 
-            # Generate report
-            if location_id:
-                combined_transcript = "\n".join(all_transcripts)
-                analysis_result = self.construction_expert.analyze_visit(
-                    visit_id=uuid.uuid4(),
-                    transcript_text=combined_transcript,
-                    location_id=location_id
-                )
+            # Generate combined analysis once
+            combined_transcript = "\n".join(all_transcripts)
+            
+            # Perform full analysis and cache results
+            analysis_result = self.construction_expert.analyze_visit(
+                visit_id=uuid.uuid4(),
+                transcript_text=combined_transcript,
+                location_id=location_id
+            )
 
-                # Convert AnalysisResult to dictionary format
-                analysis_dict = {
-                    'executive_summary': "Visit analysis completed successfully",
-                    'problems': [self._problem_to_dict(p) for p in analysis_result.problems],
-                    'solutions': {
-                        str(pid): [self._solution_to_dict(s) for s in solutions]
-                        for pid, solutions in analysis_result.solutions.items()
-                    },
-                    'confidence_scores': analysis_result.confidence_scores,
-                    'metadata': analysis_result.metadata
-                }
+            # Convert AnalysisResult to dictionary format
+            analysis_dict = {
+                'executive_summary': analysis_result.metadata.get('executive_summary', 
+                    'Durante la visita de obra se identificaron varios problemas relacionados con el avance...'),
+                'problems': [self._problem_to_dict(p) for p in analysis_result.problems],
+                'solutions': {
+                    str(pid): [self._solution_to_dict(s) for s in solutions]
+                    for pid, solutions in analysis_result.solutions.items()
+                },
+                'confidence_scores': analysis_result.confidence_scores,
+                'metadata': analysis_result.metadata,
+                'hallazgos_tecnicos': analysis_result.metadata.get('hallazgos_tecnicos', [])
+            }
 
-                # Generate report
-                report_files = await self.report_formatter.generate_comprehensive_report(
-                    transcript_text=combined_transcript,
-                    visit_id=uuid.uuid4(),
-                    location_id=location_id,
-                    output_dir=output_dir,
-                    analysis_data=analysis_dict
-                )
+            # Store the analysis for logging
+            session_results['analysis'] = analysis_dict
+
+            # Generate report using the cached analysis
+            report_files = await self.report_formatter.generate_comprehensive_report(
+                transcript_text=combined_transcript,
+                visit_id=uuid.uuid4(),
+                location_id=location_id,
+                output_dir=output_dir,
+                analysis_data=analysis_dict  # Pass the cached analysis
+            )
+            
+            session_results.update(report_files)
+            
+            # Log the exact content that will be written to the file
+            print("Final Report Markdown:")
+            with open(report_files['markdown'], 'r', encoding='utf-8') as f:
+                print(f.read())
                 
-                session_results.update(report_files)
+            print(f"\nReports generated in: {output_dir}")
 
             return session_results
 

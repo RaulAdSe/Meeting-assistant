@@ -46,6 +46,7 @@ class EnhancedReportFormatter:
                 company = "Unknown Company"
                 site = "Unknown Site"
             else:
+                print("Location Data OK:", location_data["main_site"])
                 # Handle both object and dictionary formats
                 if hasattr(main_site, 'company'):
                     company = main_site.company
@@ -57,10 +58,6 @@ class EnhancedReportFormatter:
             # Format the header
             print("DEBUG: Extracted locations before report generation:", location_data)
 
-            visited_areas = [location["location"] for location in location_data["locations"]]
-            print("DEBUG: Visited areas:", visited_areas)
-
-
             return f"""# Construction Site Visit Report
 
     ## Site Information
@@ -71,6 +68,7 @@ class EnhancedReportFormatter:
     ---
     """
         except Exception as e:
+            print(f"Error formatting header: {str(e)}")
             self.logger.error(f"Error formatting header: {str(e)}")
             # Return a default header rather than failing
             return f"""# Construction Site Visit Report
