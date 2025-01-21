@@ -8,6 +8,8 @@ from weasyprint import HTML, CSS
 import logging
 from dataclasses import dataclass
 
+from rapidfuzz import fuzz  # Use fuzzy matching for area names
+
 from src.location.location_processor import LocationProcessor
 from src.construction.expert import ConstructionExpert
 from src.timing.analyser import TaskAnalyzer
@@ -89,9 +91,13 @@ class EnhancedReportFormatter:
 
         print(f"Contents of construction_analysis: {construction_analysis}")
         
+        SIMILARITY_THRESHOLD = 80  # Minimum similarity to consider a match
+
         # 1. Get list of visited areas from location_data's extracted_locations
         extracted_locations = location_data.get('extracted_locations', [])
         visited_areas = []
+
+        # Collect visited areas
         for loc in extracted_locations:
             area = loc.get('location')
             subloc = loc.get('sublocation')
@@ -99,60 +105,71 @@ class EnhancedReportFormatter:
                 area_name = f"{area}{f' ({subloc})' if subloc else ''}"
                 visited_areas.append({
                     'area': area_name,
-                    'raw_area': area,  # Keep the raw area name for matching
+                    'raw_area': area,  
                     'observaciones_clave': [],
-                    'problemas_identificados': []
                 })
-        
-        # 2. Process problems from construction_analysis
+
+        # Debugging: Print extracted locations
+        print("\nExtracted Locations:", visited_areas)
+
+        # Process problems and extract observations (hallazgos)
         for problem in construction_analysis.get('problems', []):
             if hasattr(problem, 'location_context') and problem.location_context:
                 problem_area = problem.location_context.area
-                # Find matching area in visited_areas
-                for area_info in visited_areas:
-                    if area_info['raw_area'] == problem_area:
-                        area_info['problemas_identificados'].append(problem.description)
-                        break
 
-        # 3. Process observations from hallazgos_tecnicos
-        for finding in construction_analysis.get('hallazgos_tecnicos', []):
-            area = finding.get('ubicacion')
-            if area:
-                # Find matching area in visited_areas
-                for area_info in visited_areas:
-                    if area_info['raw_area'] == area:
-                        obs = finding.get('hallazgo')
-                        if obs:
-                            area_info['observaciones_clave'].append(obs)
-                        break
+                # Extract hallazgo (observation)
+                observation = problem.location_context.additional_info.get('raw_finding', {}).get('hallazgo')
 
-        # 4. Format the output
+                # Debugging: Check if observations are extracted
+                print(f"Observation for {problem_area}: {observation}")
+
+                # Find matching area with fuzzy matching
+                best_match = None
+                best_score = 0
+
+                for area_info in visited_areas:
+                    similarity = fuzz.ratio(problem_area.lower(), area_info['raw_area'].lower())
+
+                    if similarity > best_score and similarity >= SIMILARITY_THRESHOLD:
+                        best_score = similarity
+                        best_match = area_info
+
+                # If a close match is found, add to that area
+                if best_match:
+                    if observation:
+                        best_match['observaciones_clave'].append(f"- {observation}")
+                        print(f"Adding observation to {best_match['area']}: {observation} (Matched with {best_score}% similarity)")  # Debugging
+
+                # If no close match was found, create a new visited area
+                else:
+                    new_area_entry = {
+                        'area': problem_area,
+                        'raw_area': problem_area,
+                        'observaciones_clave': [f"- {observation}"] if observation else []
+                    }
+                    visited_areas.append(new_area_entry)
+                    print(f"Created new area entry for: {problem_area} with observation: {observation}")  # Debugging
+
+        # Format output
         areas_section = []
         if visited_areas:
             for area_info in visited_areas:
                 areas_section.append(f"\n### {area_info['area']}\n")
-                
+
                 if area_info['observaciones_clave']:
                     areas_section.append("**Observaciones Clave:**")
                     for obs in area_info['observaciones_clave']:
-                        areas_section.append(f"- {obs}")
+                        areas_section.append(f"{obs}")
                     areas_section.append("")
-                
-                if area_info['problemas_identificados']:
-                    areas_section.append("**Problemas Identificados:**")
-                    for prob in area_info['problemas_identificados']:
-                        areas_section.append(f"- {prob}")
-                    areas_section.append("")
-                
                 areas_section.append("")
         else:
             areas_section = ["No se visitaron áreas"]
 
+        # Convert to final formatted text
         areas_text = "\n".join(areas_section)
 
-        print("Formatted Areas Text:\n")
-        print(areas_text)
-        print("\nEnd of Areas Text\n")
+        # Debugging: Print final formatted output
+        print("\nFinal Areas Text:\n", areas_text)
 
         formatted_summary = f"""## Resumen Ejecutivo
 
@@ -170,7 +187,6 @@ class EnhancedReportFormatter:
         formatted_summary += "\n---"
 
         return formatted_summary
-
 
     def _format_problems_section(self, construction_analysis: Dict) -> str:
         """Format the problems and solutions section, handling both object and dict formats."""
