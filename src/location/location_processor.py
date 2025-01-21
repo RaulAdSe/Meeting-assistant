@@ -136,7 +136,7 @@ class LocationProcessor:
                 site=result['main_site']['location']
             )
 
-            # Extract locations directly from the result
+          # Extract locations directly from the result
             extracted_locations = result.get('locations', [])
             
             # Print debug info

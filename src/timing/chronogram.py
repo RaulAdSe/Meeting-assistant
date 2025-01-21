@@ -7,68 +7,72 @@ from typing import Set  # Ensure Set is imported
 class ChronogramVisualizer:
     """Creates visualizations of construction schedules"""
     
-    def generate_mermaid_gantt(
-        self, 
-        schedule: ScheduleGraph,
-        start_date: datetime
-    ) -> str:
-        """
-        Generate a Mermaid.js Gantt diagram.
-        
-        Args:
-            schedule: ScheduleGraph containing tasks and relationships
-            start_date: Project start date
-            
-        Returns:
-            Mermaid.js Gantt diagram markup
-        """
+    def generate_mermaid_gantt(self, schedule: ScheduleGraph, start_date: datetime) -> str:
+        """Generate a more organized Mermaid.js Gantt diagram."""
         lines = [
-            "gantt",
-            "    dateFormat YYYY-MM-DD",
-            "    title Cronograma de Construcción",
-            "    %% Tasks are grouped by parallel execution",
+            "    %% Organizado por áreas y tipos de trabajo",
             ""
         ]
-        
+
         # Calculate task dates
         task_dates = self._calculate_task_dates(schedule, start_date)
         
-        # Group tasks by parallel execution
-        task_groups = self._group_tasks(schedule)
-        
-        # Add sections for each group
-        for group_idx, group in enumerate(task_groups):
-            if len(group) > 1:
-                lines.append(f"    section Tareas Paralelas {group_idx + 1}")
-            else:
-                lines.append("    section Tareas Secuenciales")
-                
-            # Add tasks in group
-            for task_id in group:
-                task = schedule.tasks[task_id]
+        # Group tasks by area and type
+        tasks_by_area = {}
+        for task_id, task in schedule.tasks.items():
+            area = task.location if task.location else "Área General"
+            if area not in tasks_by_area:
+                tasks_by_area[area] = []
+            tasks_by_area[area].append((task_id, task))
+
+        # Add tasks by area
+        for area, area_tasks in tasks_by_area.items():
+            lines.append(f"    section {area}")
+            
+            # Sort tasks by start date
+            area_tasks.sort(key=lambda x: task_dates[x[0]]['start'])
+            
+            for task_id, task in area_tasks:
                 task_dates_info = task_dates[task_id]
                 
-                # Format dependencies
-                dependencies = [
-                    str(rel.from_task_id) 
-                    for rel in schedule.relationships 
-                    if rel.to_task_id == task_id
-                ]
-                dependency_str = f" after {','.join(dependencies)}" if dependencies else ""
+                # Get task dependencies in a readable format
+                dependencies = []
+                for rel in schedule.relationships:
+                    if rel.to_task_id == task_id:
+                        dep_task = schedule.tasks[rel.from_task_id]
+                        dependencies.append(dep_task.name)
                 
-                # Add any risk indicators and responsible person
-                risk_indicator = " 🚨" if task.metadata.get('risks') else ""
+                dependency_str = f" after {', '.join(dependencies)}" if dependencies else ""
+                
+                # Add indicators
+                indicators = []
+                if task.metadata.get('risks'):
+                    indicators.append("🚨")
+                if task.can_be_parallel:
+                    indicators.append("⚡")  # Parallel indicator
+                indicators_str = " ".join(indicators)
+                
+                # Add responsible person
                 responsible = f" [{task.responsible}]" if task.responsible else ""
                 
                 # Format task line
                 lines.append(
-                    f"    {task.name}{risk_indicator}{responsible}{dependency_str} : "
+                    f"    {task.name}{' ' + indicators_str if indicators_str else ''}"
+                    f"{responsible}{dependency_str} : "
                     f"{task_dates_info['start'].strftime('%Y-%m-%d')}, "
                     f"{task_dates_info['end'].strftime('%Y-%m-%d')}"
                 )
             
             lines.append("")
-        
+
+        # Add legend
+        lines.extend([
+            "    section Leyenda",
+            "    🚨 Tarea con riesgos identificados : milestone, 0d",
+            "    ⚡ Tarea que puede ejecutarse en paralelo : milestone, 0d",
+            ""
+        ])
+
         return "\n".join(lines)
 
     def generate_html_visualization(

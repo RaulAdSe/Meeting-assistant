@@ -189,90 +189,104 @@ class EnhancedReportFormatter:
         return formatted_summary
 
     def _format_problems_section(self, construction_analysis: Dict) -> str:
-        """Format the problems and solutions section, handling both object and dict formats."""
+        """Format problems and solutions with enhanced organization."""
         SEVERITY_MAPPING = {
-            "low": "baja",
-            "medium": "media",
-            "high": "alta",
-            "critical": "crítica"
+            'LOW': 'Baja', 'MEDIUM': 'Media', 'HIGH': 'Alta', 'CRITICAL': 'Crítica',
+            'Severity.LOW': 'Baja', 'Severity.MEDIUM': 'Media', 
+            'Severity.HIGH': 'Alta', 'Severity.CRITICAL': 'Crítica',
+            'low': 'Baja', 'medium': 'Media', 'high': 'Alta', 'critical': 'Crítica'
         }
 
-        sections = ["## Problemas y Soluciones\n"]
-        
-        # Handle technical findings
-        if construction_analysis.get('hallazgos_tecnicos'):
-            for finding in construction_analysis['hallazgos_tecnicos']:
-                sections.append(f"### Problema en {finding['ubicacion']}")
-                severity_es = SEVERITY_MAPPING.get(finding.get('severidad', '').lower(), finding.get('severidad', ''))
-                sections.append(f"**Severidad:** {severity_es}")
-                sections.append(f"**Descripción:** {finding.get('hallazgo', 'No description')}")
-                if 'accion_recomendada' in finding:
-                    sections.append(f"**Acción Recomendada:** {finding['accion_recomendada']}")
-                sections.append("")
+        sections = ["## Problemas Identificados y Plan de Acción\n"]
+        problems_by_area = {}
 
-        # Handle safety concerns
-        if construction_analysis.get('preocupaciones_seguridad'):
-            sections.append("### Preocupaciones de Seguridad")
-            for concern in construction_analysis['preocupaciones_seguridad']:
-                sections.append(f"**Ubicación:** {concern.get('ubicacion', 'Unknown')}")
-                sections.append(f"**Preocupación:** {concern.get('preocupacion', 'Unknown')}")
-                priority_es = SEVERITY_MAPPING.get(concern.get('prioridad', '').lower(), concern.get('prioridad', ''))
-                sections.append(f"**Prioridad:** {priority_es}")
-                sections.append(f"**Mitigación:** {concern.get('mitigacion', 'No mitigation')}")
-                sections.append("")
-
-        # Handle problems list (either objects or dicts)
+        # Process problems from construction analysis
         if construction_analysis.get('problems'):
             for problem in construction_analysis['problems']:
-                try:
-                    # First determine if we're dealing with an object or dict
-                    is_object = not isinstance(problem, dict)
-                    
-                    if is_object:
-                        # Handle ConstructionProblem object
-                        area = problem.location_context.area if problem.location_context else 'Unknown Area'
-                        severity = problem.severity.value if hasattr(problem.severity, 'value') else str(problem.severity)
-                        description = problem.description
-                        problem_id = problem.id
-                    else:
-                        # Handle dictionary
-                        area = problem.get('location_context', {}).get('area', 'Unknown Area')
-                        severity = problem.get('severity', 'Unknown')
-                        description = problem.get('description', 'No description')
-                        problem_id = problem.get('id')
+                # Handle both object and dict formats
+                if not isinstance(problem, dict):
+                    area = problem.location_context.area if problem.location_context else 'Área General'
+                    severity = problem.severity.value if hasattr(problem.severity, 'value') else str(problem.severity)
+                    description = problem.description
+                    problem_id = problem.id
+                    # Extract accion_recomendada from additional_info
+                    recommended_action = (problem.location_context.additional_info.get('raw_finding', {})
+                                    .get('accion_recomendada') if problem.location_context else None)
+                else:
+                    area = problem.get('location_context', {}).get('area', 'Área General')
+                    severity = problem.get('severity', 'Unknown')
+                    description = problem.get('description', '')
+                    problem_id = problem.get('id')
+                    recommended_action = None
 
-                    sections.append(f"### Problema en {area}")
-                    sections.append(f"**Severidad:** {SEVERITY_MAPPING.get(str(severity).lower(), str(severity))}")
-                    sections.append(f"**Descripción:** {description}")
+                if area not in problems_by_area:
+                    problems_by_area[area] = {'problems': [], 'safety': [], 'solutions': []}
 
-                    # Handle solutions if present
-                    if construction_analysis.get('solutions') and problem_id:
-                        problem_solutions = construction_analysis['solutions'].get(str(problem_id))
-                        if problem_solutions:
-                            sections.append("\n**Soluciones Propuestas:**")
-                            for solution in problem_solutions:
-                                if isinstance(solution, dict):
-                                    # Dictionary format
-                                    sections.append(f"- {solution.get('description', 'No description')}")
-                                    if solution.get('estimated_time'):
-                                        sections.append(f"  - Tiempo estimado: {solution['estimated_time']} minutos")
-                                else:
-                                    # Object format
-                                    sections.append(f"- {solution.description}")
-                                    if solution.estimated_time:
-                                        sections.append(f"  - Tiempo estimado: {solution.estimated_time} minutos")
+                problems_by_area[area]['problems'].append({
+                    'description': description,
+                    'severity': SEVERITY_MAPPING.get(str(severity).lower(), severity),
+                    'id': problem_id,
+                    'recommended_action': recommended_action
+                })
 
+                # Add associated solutions from solutions dict
+                if problem_id and construction_analysis.get('solutions'):
+                    solutions = construction_analysis['solutions'].get(str(problem_id), [])
+                    for solution in solutions:
+                        if isinstance(solution, dict):
+                            solution_desc = solution.get('description', '')
+                            est_time = solution.get('estimated_time')
+                            priority = solution.get('priority')
+                        else:
+                            solution_desc = solution.description
+                            est_time = solution.estimated_time
+                            priority = solution.priority
+
+                        problems_by_area[area]['solutions'].append({
+                            'description': solution_desc,
+                            'estimated_time': est_time,
+                            'problem_id': problem_id,
+                            'priority': priority
+                        })
+
+            # Format output by area
+            for area, data in problems_by_area.items():
+                sections.append(f"### {area}")
+                
+                if data['problems']:
+                    sections.append("\n#### Problemas Técnicos")
+                    for problem in data['problems']:
+                        sections.append(f"- **Problema:** {problem['description']}")
+                        sections.append(f"  - Severidad: {problem['severity']}")
+                        
+                        # Add recommended action if available
+                        if problem['recommended_action']:
+                            sections.append(f"  - Acción recomendada: {problem['recommended_action']}")
+                        
+                        # Add associated solutions
+                        related_solutions = [s for s in data['solutions'] if s['problem_id'] == problem['id']]
+                        if related_solutions:
+                            sections.append("  - Plan de acción:")
+                            for solution in related_solutions:
+                                priority_str = f" (Prioridad: {solution['priority']})" if solution['priority'] else ""
+                                sections.append(f"    * {solution['description']}{priority_str}")
+                                if solution['estimated_time']:
+                                    sections.append(f"      Tiempo estimado: {solution['estimated_time']} minutos")
                     sections.append("")
-                    
-                except Exception as e:
-                    self.logger.warning(f"Error processing problem: {str(e)}")
-                    continue
 
-        # Add default message if no problems found
-        if len(sections) == 1:  # Only header present
-            sections.append("No se han identificado problemas en esta visita.\n")
+                if data['safety']:
+                    sections.append("#### Preocupaciones de Seguridad")
+                    for concern in data['safety']:
+                        sections.append(f"- **Riesgo:** {concern['description']}")
+                        sections.append(f"  - Prioridad: {concern['priority']}")
+                    sections.append("")
+                
+                sections.append("---\n")
 
-        return "\n".join(sections)
+            if len(sections) == 1:
+                sections.append("No se han identificado problemas en esta visita.\n")
+
+            return "\n".join(sections)
 
 
     def _get_task_properties(self, task) -> tuple:
