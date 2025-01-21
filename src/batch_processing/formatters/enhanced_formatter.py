@@ -91,7 +91,7 @@ class EnhancedReportFormatter:
 
         print(f"Contents of construction_analysis: {construction_analysis}")
         
-        SIMILARITY_THRESHOLD = 80  # Minimum similarity to consider a match
+        SIMILARITY_THRESHOLD = 90  # Minimum similarity to consider a match
 
         # 1. Get list of visited areas from location_data's extracted_locations
         extracted_locations = location_data.get('extracted_locations', [])
