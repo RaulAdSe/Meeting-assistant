@@ -42,15 +42,6 @@ async def main():
         print("\nProcessing files...")
         results = await transcriber.process_session(session)
         
-        # Generate comprehensive report using the formatter within the transcriber
-        print("\nGenerating report...")
-        report_files = await transcriber.report_formatter.generate_comprehensive_report(
-            transcript_text="\n".join([t['text'] for t in results['transcripts']]),
-            visit_id=session.session_id,
-            location_id=session.location,
-            output_dir=OUTPUT_DIR / session.session_id
-        )
-        
         print(f"\nReports generated in: {OUTPUT_DIR / session.session_id}")
         
     except Exception as e:
