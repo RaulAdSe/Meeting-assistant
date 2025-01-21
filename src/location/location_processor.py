@@ -136,7 +136,7 @@ class LocationProcessor:
                 site=result['main_site']['location']
             )
 
-          # Extract locations directly from the result
+            # Extract locations directly from the result
             extracted_locations = result.get('locations', [])
             
             # Print debug info
@@ -155,7 +155,8 @@ class LocationProcessor:
 
             return {
                 'main_site': main_site,
-                'location_changes': sorted(location_changes, key=lambda x: x.timestamp)
+                'location_changes': sorted(location_changes, key=lambda x: x.timestamp),
+                'extracted_locations': extracted_locations
             }
 
         except Exception as e:
