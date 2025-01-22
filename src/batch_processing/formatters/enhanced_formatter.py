@@ -153,17 +153,16 @@ class EnhancedReportFormatter:
         # Format output
         areas_section = []
         if visited_areas:
-            for area_info in visited_areas:
-                areas_section.append(f"\n### {area_info['area']}\n")
 
-                if area_info['observaciones_clave']:
-                    areas_section.append("**Observaciones Clave:**")
-                    for obs in area_info['observaciones_clave']:
-                        areas_section.append(f"{obs}")
-                    areas_section.append("")
-                areas_section.append("")
+            area_names = [area_info['area'] for area_info in visited_areas]
+            # join them in comma-separated format
+            areas_text = ", ".join(area_names)
         else:
-            areas_section = ["No se visitaron áreas"]
+                areas_text = "No se visitaron áreas"
+
+            # No bullet points or second heading. Just store it all in `areas_section`.
+        areas_section = [areas_text]
+
 
         # Convert to final formatted text
         areas_text = "\n".join(areas_section)
@@ -189,47 +188,55 @@ class EnhancedReportFormatter:
         return formatted_summary
 
     def _format_problems_section(self, construction_analysis: Dict) -> str:
-        """Format problems and solutions with enhanced organization."""
         SEVERITY_MAPPING = {
-            'LOW': 'Baja', 'MEDIUM': 'Media', 'HIGH': 'Alta', 'CRITICAL': 'Crítica',
-            'Severity.LOW': 'Baja', 'Severity.MEDIUM': 'Media', 
-            'Severity.HIGH': 'Alta', 'Severity.CRITICAL': 'Crítica',
-            'low': 'Baja', 'medium': 'Media', 'high': 'Alta', 'critical': 'Crítica'
+            'LOW': 'Baja', 
+            'MEDIUM': 'Media', 
+            'HIGH': 'Alta', 
+            'CRITICAL': 'Crítica',
         }
 
         sections = ["## Problemas Identificados y Plan de Acción\n"]
         problems_by_area = {}
 
-        # Process problems from construction analysis
         if construction_analysis.get('problems'):
             for problem in construction_analysis['problems']:
-                # Handle both object and dict formats
+                # -- Existing logic to read problem data --
                 if not isinstance(problem, dict):
                     area = problem.location_context.area if problem.location_context else 'Área General'
-                    severity = problem.severity.value if hasattr(problem.severity, 'value') else str(problem.severity)
+                    severity_raw = problem.severity.value if hasattr(problem.severity, 'value') else str(problem.severity)
                     description = problem.description
                     problem_id = problem.id
-                    # Extract accion_recomendada from additional_info
-                    recommended_action = (problem.location_context.additional_info.get('raw_finding', {})
-                                    .get('accion_recomendada') if problem.location_context else None)
+                    recommended_action = (
+                        problem.location_context.additional_info.get('raw_finding', {})
+                        .get('accion_recomendada') if problem.location_context else None
+                    )
                 else:
                     area = problem.get('location_context', {}).get('area', 'Área General')
-                    severity = problem.get('severity', 'Unknown')
+                    severity_raw = problem.get('severity', 'Unknown')
                     description = problem.get('description', '')
                     problem_id = problem.get('id')
                     recommended_action = None
 
+                # -- NEW: Normalize severity to match your dictionary keys --
+                if severity_raw.startswith("Severity."):
+                    severity_raw = severity_raw.replace("Severity.", "")
+                severity_str = severity_raw.upper()  # e.g. "MEDIUM" or "HIGH"
+
+                # Now map it to Spanish
+                severity_in_spanish = SEVERITY_MAPPING.get(severity_str, severity_str)
+
+                # store in problems_by_area
                 if area not in problems_by_area:
                     problems_by_area[area] = {'problems': [], 'safety': [], 'solutions': []}
 
                 problems_by_area[area]['problems'].append({
                     'description': description,
-                    'severity': SEVERITY_MAPPING.get(str(severity).lower(), severity),
+                    'severity': severity_in_spanish,
                     'id': problem_id,
-                    'recommended_action': recommended_action
+                    'recommended_action': recommended_action,
                 })
 
-                # Add associated solutions from solutions dict
+                # -- Existing logic to fetch solutions --
                 if problem_id and construction_analysis.get('solutions'):
                     solutions = construction_analysis['solutions'].get(str(problem_id), [])
                     for solution in solutions:
@@ -261,7 +268,7 @@ class EnhancedReportFormatter:
                         
                         # Add recommended action if available
                         if problem['recommended_action']:
-                            sections.append(f"  - Acción recomendada: {problem['recommended_action']}")
+                            sections.append(f"  - Acción recomendada: {problem['accion_recomendada']}")
                         
                         # Add associated solutions
                         related_solutions = [s for s in data['solutions'] if s['problem_id'] == problem['id']]
@@ -366,7 +373,8 @@ class EnhancedReportFormatter:
                     f"- **Ubicación:** {task['ubicacion']}",
                     f"- **Asignado a:** {task['asignado_a']}",
                     f"- **Prioridad:** {task['prioridad']}",
-                    f"- **Plazo:** {task['plazo']}\n"
+                    f"- **Plazo:** {task['plazo']}",
+                    f"- **Observaciones Generales:** {task['observaciones_generales']}\n",
                 ])
         
         # Add tasks from timing analysis
@@ -577,57 +585,17 @@ class EnhancedReportFormatter:
         visit_id: uuid.UUID,
         location_id: uuid.UUID,
         output_dir: Path,
-        analysis_data: Optional[Dict[str, Any]] = None,
+        location_data: Optional[Dict[str, Any]] = None,
+        construction_analysis: Optional[Dict[str, Any]] = None,
+        timing_analysis: Optional[Dict[str, Any]] = None,
+        chronogram: Optional[str] = None,
         start_date: Optional[datetime] = None
     ) -> Dict[str, Path]:
-        """Generate a comprehensive report integrating all analyses."""
+        """Generate a comprehensive report using pre-analyzed data."""
         try:
             logger = logging.getLogger(__name__)
-            # Process location data
-            self.logger.info("Processing location data...")
-            location_data = self.location_processor.process_transcript(transcript_text)
-        
-            logger.debug(f"Generating report for visit {visit_id}, location {location_id}")
-
-            # Use provided analysis data or generate new analysis
-            if analysis_data:
-                construction_analysis = analysis_data
-                logger.debug(f"Analysis Data: {analysis_data}")
-            else:
-                # Get construction analysis
-                self.logger.info("Analyzing construction aspects...")
-                analysis_result = self.construction_expert.analyze_visit(
-                    visit_id=visit_id,
-                    transcript_text=transcript_text,
-                    location_id=location_id
-                )
-
-                construction_analysis = {
-                    'executive_summary': analysis_result.metadata.get('executive_summary', 'No summary available'),                    
-                    'problems': analysis_result.problems,
-                    'solutions': analysis_result.solutions,
-                    'confidence_scores': analysis_result.confidence_scores,
-                    'metadata': analysis_result.metadata
-                }
             
-            # Get timing analysis
-            self.logger.info("Analyzing timing and tasks...")
-            timing_data = self.task_analyzer.analyze_transcript(
-                transcript_text=transcript_text,
-                location_id=location_id
-            )
-            
-            # Convert timing data to ScheduleGraph
-            timing_analysis = self._convert_to_schedule_graph(timing_data)
-            
-            # Generate chronogram
-            self.logger.info("Generating chronogram visualization...")
-            chronogram = self.chronogram_visualizer.generate_mermaid_gantt(
-                timing_analysis,
-                start_date or datetime.now()
-            )
-            
-            # Create report sections
+            # Create report sections directly from provided data
             sections = self._create_report_sections(
                 location_data=location_data,
                 construction_analysis=construction_analysis,
@@ -635,26 +603,44 @@ class EnhancedReportFormatter:
                 chronogram=chronogram
             )
             
-            
-
             # Generate report files
-            print("Final Report Markdown:")
-            print(self._generate_markdown(sections))
-
-            return await self._generate_report_files(
-                sections=sections,
-                output_dir=output_dir,
-                metadata={
-                    "visit_id": str(visit_id),
-                    "location_id": str(location_id),
-                    "generated_at": datetime.now().isoformat()
-                }
-            )
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Generate markdown
+            markdown_path = output_dir / "report.md"
+            markdown_content = self._generate_markdown(sections)
+            markdown_path.write_text(markdown_content, encoding='utf-8')
+            
+            # Generate PDF
+            pdf_path = output_dir / "report.pdf"
+            await self._generate_pdf(markdown_content, pdf_path)
+            
+            # Save metadata
+            metadata_path = output_dir / "report_metadata.json"
+            metadata = {
+                "visit_id": str(visit_id),
+                "location_id": str(location_id),
+                "generated_at": datetime.now().isoformat(),
+                "sections": [
+                    {
+                        "title": section.title,
+                        "type": section.type,
+                        "order": section.order
+                    }
+                    for section in sections
+                ]
+            }
+            metadata_path.write_text(json.dumps(metadata, indent=2))
+            
+            return {
+                "markdown": markdown_path,
+                "pdf": pdf_path,
+                "metadata": metadata_path
+            }
             
         except Exception as e:
             self.logger.error(f"Error generating report: {str(e)}")
             raise
-
 
     def _generate_markdown(self, sections: List[ReportSection]) -> str:
         """Generate complete markdown content from sections"""

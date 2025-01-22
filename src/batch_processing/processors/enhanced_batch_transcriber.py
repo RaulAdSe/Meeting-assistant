@@ -19,6 +19,7 @@ from src.historical_data.database.location_repository import LocationRepository
 from src.batch_processing.formatters.enhanced_formatter import EnhancedReportFormatter
 from src.historical_data.models.models import Location
 
+
 from enum import Enum
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -162,74 +163,48 @@ class EnhancedBatchTranscriber:
             output_dir = Path("reports") / session.session_id
             output_dir.mkdir(parents=True, exist_ok=True)
 
+            # Process all files and combine transcripts
+            all_transcripts = []
+            for audio_file in session.files:
+                try:
+                    transcript_result = self.transcriber.process_audio(str(audio_file.path))
+                    if 'transcript' in transcript_result:
+                        all_transcripts.append(transcript_result['transcript']['text'])
+                        audio_file.processed = True
+                except Exception as e:
+                    self.logger.error(f"Error processing {audio_file.path}: {str(e)}")
+                    continue
+
+            if not all_transcripts:
+                raise ValueError("No transcripts were successfully processed")
+
+            # Combine all transcripts
+            combined_transcript = "\n".join(all_transcripts)
+
             # Get location using unified handler
             location_name = self._validate_uuid_or_str(session.location)
             location = self._handle_location(location_name=location_name)
             
             if not location:
                 raise ValueError("Failed to create or retrieve location")
-                    
+            
             location_id = location.id
 
-            session_results = {
-                'session_id': session.session_id,
-                'location': location.name,
-                'start_time': session.start_time.isoformat(),
-                'analyses': [],
-                'transcripts': [],
-                'metadata': {
-                    'total_files': len(session.files),
-                    'total_duration': session.total_duration,
-                    'notes': session.notes,
-                    'location_id': str(location_id)
-                },
-                'output_dir': str(output_dir)
-            }
-
-            # Process files sequentially
-            all_transcripts = []
-            for audio_file in session.files:
-                self.logger.info(f"Processing file: {audio_file.path}")
-                try:
-                    # Process audio and get transcript
-                    transcript_result = self.transcriber.process_audio(str(audio_file.path))
-                    
-                    if 'transcript' in transcript_result:
-                        transcript_data = {
-                            'text': transcript_result['transcript']['text'],
-                            'file': str(audio_file.path),
-                            'duration': audio_file.duration
-                        }
-                        session_results['transcripts'].append(transcript_data)
-                        all_transcripts.append(transcript_result['transcript']['text'])
-                        
-                        transcript_path = output_dir / f"{Path(audio_file.path).stem}_transcript.txt"
-                        with open(transcript_path, "w", encoding="utf-8") as f:
-                            f.write(transcript_result['transcript']['text'])
-                    
-                    audio_file.processed = True
-                    
-                except Exception as e:
-                    self.logger.error(f"Error processing {audio_file.path}: {str(e)}")
-                    continue
-
-            if not session_results['transcripts']:
-                raise ValueError("No transcripts were successfully processed")
-
-            # Generate combined analysis once
-            combined_transcript = "\n".join(all_transcripts)
+            # Step 1: Process location data
+            location_data = self.location_processor.process_transcript(combined_transcript)
             
-            # Perform full analysis and cache results
+            # Step 2: Perform construction analysis
+            visit_id = uuid.uuid4()
             analysis_result = self.construction_expert.analyze_visit(
-                visit_id=uuid.uuid4(),
+                visit_id=visit_id,
                 transcript_text=combined_transcript,
                 location_id=location_id
             )
 
-            # Convert AnalysisResult to dictionary format
-            analysis_dict = {
+            # Convert analysis result to dictionary format
+            construction_analysis = {
                 'executive_summary': analysis_result.metadata.get('executive_summary', 
-                    'Durante la visita de obra se identificaron varios problemas relacionados con el avance...'),
+                    'Durante la visita de obra se identificaron varios problemas...'),
                 'problems': [self._problem_to_dict(p) for p in analysis_result.problems],
                 'solutions': {
                     str(pid): [self._solution_to_dict(s) for s in solutions]
@@ -240,26 +215,51 @@ class EnhancedBatchTranscriber:
                 'hallazgos_tecnicos': analysis_result.metadata.get('hallazgos_tecnicos', [])
             }
 
-            # Store the analysis for logging
-            session_results['analysis'] = analysis_dict
+            # Step 3: Process timing analysis
+            timing_analysis = self.task_analyzer.analyze_transcript(
+                transcript_text=combined_transcript,
+                location_id=location_id
+            )
 
-            # Generate report using the cached analysis
+            # Step 4: Generate chronogram
+            chronogram = self.report_formatter.chronogram_visualizer.generate_mermaid_gantt(
+                timing_analysis,
+                start_date=datetime.now()
+            )
+
+            # Step 5: Generate comprehensive report with all pre-analyzed data
             report_files = await self.report_formatter.generate_comprehensive_report(
                 transcript_text=combined_transcript,
-                visit_id=uuid.uuid4(),
+                visit_id=visit_id,
                 location_id=location_id,
                 output_dir=output_dir,
-                analysis_data=analysis_dict  # Pass the cached analysis
+                location_data=location_data,
+                construction_analysis=construction_analysis,
+                timing_analysis=timing_analysis,
+                chronogram=chronogram
             )
-            
-            session_results.update(report_files)
-            
-            # Log the exact content that will be written to the file
-            print("Final Report Markdown:")
-            with open(report_files['markdown'], 'r', encoding='utf-8') as f:
-                print(f.read())
-                
-            print(f"\nReports generated in: {output_dir}")
+
+            # Prepare final results
+            session_results = {
+                'session_id': session.session_id,
+                'location': location.name,
+                'transcripts': all_transcripts,
+                'analyses': {
+                    'location_data': location_data,
+                    'construction_analysis': construction_analysis,
+                    'timing_analysis': timing_analysis
+                },
+                'reports': report_files,
+                'metadata': {
+                    'total_files': len(session.files),
+                    'total_duration': session.total_duration,
+                    'notes': session.notes,
+                    'location_id': str(location_id)
+                }
+            }
+
+            print("Session processing completed. Results summary:")
+            print(session_results)
 
             return session_results
 

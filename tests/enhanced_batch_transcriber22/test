@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent))
+
+from src.batch_processing.processors.enhanced_batch_transcriber import EnhancedBatchTranscriber
+from src.batch_processing.models.session import AudioSession, AudioFile
+from datetime import datetime
+import asyncio
+import logging
+
+async def main():
+    # Set up logging
+    logging.basicConfig(level=logging.INFO)
+    
+    # Create realistic construction transcript
+    transcript = """
+    Fecha: 15 de enero de 2024
+    Ubicación: Obra Torre Norte - Constructora ABC
+
+    10:15 AM - Área de Cimentación
+    Juan: Hemos identificado una grieta estructural importante en la zona norte de la cimentación.
+    María: La grieta tiene aproximadamente 2.5 metros y necesita atención inmediata.
+    Carlos: Necesitaremos reforzar la estructura. Calculo unos 3 días para la reparación.
+
+    10:30 AM - Área de Instalaciones
+    Sara: El sistema eléctrico está al 80% de avance.
+    Miguel: Podemos trabajar en paralelo con la fontanería para optimizar tiempos.
+    Sara: Los conductos principales están listos para la siguiente fase.
+
+    11:00 AM - Sector Norte
+    Juan: La inspección detallada muestra que es un problema estructural de severidad alta.
+    María: Debemos programar la reparación lo antes posible para evitar retrasos.
+
+    11:30 AM - Área de Acabados
+    Luis: En esta zona los acabados están retrasados por problemas de humedad.
+    Ana: Los materiales para los acabados llegan mañana.
+
+    Resumen de Acciones:
+    1. Reparación estructural urgente en cimentación norte
+    2. Coordinación trabajos eléctricos y fontanería
+    3. Revisión de niveles de humedad en acabados
+    4. Seguimiento en 48 horas
+    """
+    
+    # Save transcript to a file
+    transcript_path = Path('data/raw/site_visit_20240115.txt')
+    transcript_path.parent.mkdir(parents=True, exist_ok=True)
+    transcript_path.write_text(transcript)
+    
+    # Create a test audio file with metadata
+    audio_file = AudioFile(
+        path=transcript_path,
+        creation_time=datetime(2024, 1, 15, 10, 0),
+        size=len(transcript.encode()),
+        duration=90.0,  # 90 minutes session
+        processed=False,
+        metadata={
+            'format': 'txt',
+            'sample_rate': 44100,
+            'channels': 1
+        }
+    )
+
+    # Create session
+    session = AudioSession(
+        session_id="20240115_torre_norte",
+        start_time=datetime(2024, 1, 15, 10, 0),
+        files=[audio_file],
+        location="Obra Torre Norte",
+        notes="Visita de inspección estructural"
+    )
+
+    # Initialize transcriber
+    transcriber = EnhancedBatchTranscriber()
+    
+    try:
+        # Process the session
+        print("\nProcessing session...")
+        results = await transcriber.process_session(session)
+        
+        print("\nAnalysis Results:")
+        print("="*50)
+        
+        # Print location data
+        print("\nLocation Data:")
+        location_data = results['analyses']['location_data']
+        print(f"Company: {location_data['main_site']['company']}")
+        print(f"Site: {location_data['main_site']['site']}")
+        print("\nLocation Changes:")
+        for change in location_data['location_changes']:
+            print(f"- {change.timestamp}: {change.area}")
+            
+        # Print construction analysis
+        print("\nConstruction Analysis:")
+        construction_analysis = results['analyses']['construction_analysis']
+        print("\nProblems Found:")
+        for problem in construction_analysis['problems']:
+            print(f"- {problem['description']} (Severity: {problem['severity']})")
+            
+        # Print timing analysis
+        print("\nTiming Analysis:")
+        timing_analysis = results['analyses']['timing_analysis']
+        print("\nTasks:")
+        for task in timing_analysis.tasks.values():
+            print(f"- {task.name} ({task.duration.amount} {task.duration.unit})")
+            if task.responsible:
+                print(f"  Assigned to: {task.responsible}")
+                
+        # Print report locations
+        print("\nGenerated Reports:")
+        for report_type, path in results['reports'].items():
+            print(f"- {report_type}: {path}")
+            
+        # Read and print the generated markdown report
+        if 'markdown' in results['reports']:
+            print("\nReport Content:")
+            print("-" * 50)
+            with open(results['reports']['markdown'], 'r', encoding='utf-8') as f:
+                print(f.read())
+                
+        return results
+        
+    except Exception as e:
+        print(f"Error processing session: {str(e)}")
+        raise
+
+if __name__ == "__main__":
+    asyncio.run(main())
