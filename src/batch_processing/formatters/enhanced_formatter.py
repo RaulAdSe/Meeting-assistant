@@ -32,10 +32,7 @@ class EnhancedReportFormatter:
     def __init__(self):
         """Initialize formatter with all required agents"""
         self.logger = logging.getLogger(__name__)
-        self.location_processor = LocationProcessor()
-        self.construction_expert = ConstructionExpert()
-        self.task_analyzer = TaskAnalyzer()
-        self.llm_service = LLMService()
+        self.logger = logging.getLogger(__name__)
         self.chronogram_visualizer = ChronogramVisualizer()
 
     def _format_header(self, location_data: Dict) -> str:
@@ -83,109 +80,24 @@ class EnhancedReportFormatter:
     ---
     """
     
-    def _format_executive_summary(self, construction_analysis: dict, location_data:dict) -> str:
-        """Format the executive summary section"""
-        self.logger.debug(f"Construction analysis input: {construction_analysis}")
-        
+    def _format_executive_summary(self, construction_analysis: dict, location_data: dict) -> str:
         summary = construction_analysis.get('executive_summary', 'No summary available.')
-
-        print(f"Contents of construction_analysis: {construction_analysis}")
-        
-        SIMILARITY_THRESHOLD = 90  # Minimum similarity to consider a match
-
-        # 1. Get list of visited areas from location_data's extracted_locations
         extracted_locations = location_data.get('extracted_locations', [])
-        visited_areas = []
-
-        # Collect visited areas
-        for loc in extracted_locations:
-            area = loc.get('location')
-            subloc = loc.get('sublocation')
-            if area:
-                area_name = f"{area}{f' ({subloc})' if subloc else ''}"
-                visited_areas.append({
-                    'area': area_name,
-                    'raw_area': area,  
-                    'observaciones_clave': [],
-                })
-
-        # Debugging: Print extracted locations
-        print("\nExtracted Locations:", visited_areas)
-
-        # Process problems and extract observations (hallazgos)
-        for problem in construction_analysis.get('problems', []):
-            if hasattr(problem, 'location_context') and problem.location_context:
-                problem_area = problem.location_context.area
-
-                # Extract hallazgo (observation)
-                observation = problem.location_context.additional_info.get('raw_finding', {}).get('hallazgo')
-
-                # Debugging: Check if observations are extracted
-                print(f"Observation for {problem_area}: {observation}")
-
-                # Find matching area with fuzzy matching
-                best_match = None
-                best_score = 0
-
-                for area_info in visited_areas:
-                    similarity = fuzz.ratio(problem_area.lower(), area_info['raw_area'].lower())
-
-                    if similarity > best_score and similarity >= SIMILARITY_THRESHOLD:
-                        best_score = similarity
-                        best_match = area_info
-
-                # If a close match is found, add to that area
-                if best_match:
-                    if observation:
-                        best_match['observaciones_clave'].append(f"- {observation}")
-                        print(f"Adding observation to {best_match['area']}: {observation} (Matched with {best_score}% similarity)")  # Debugging
-
-                # If no close match was found, create a new visited area
-                else:
-                    new_area_entry = {
-                        'area': problem_area,
-                        'raw_area': problem_area,
-                        'observaciones_clave': [f"- {observation}"] if observation else []
-                    }
-                    visited_areas.append(new_area_entry)
-                    print(f"Created new area entry for: {problem_area} with observation: {observation}")  # Debugging
-
-        # Format output
-        areas_section = []
-        if visited_areas:
-
-            area_names = [area_info['area'] for area_info in visited_areas]
-            # join them in comma-separated format
-            areas_text = ", ".join(area_names)
+        if extracted_locations:
+            area_names = [loc.get('location') for loc in extracted_locations]
+            visited_areas = ", ".join(area for area in area_names if area)
         else:
-                areas_text = "No se visitaron áreas"
+            visited_areas = "No se visitaron áreas"
 
-            # No bullet points or second heading. Just store it all in `areas_section`.
-        areas_section = [areas_text]
+        return f"""## Resumen Ejecutivo
 
+{summary}
 
-        # Convert to final formatted text
-        areas_text = "\n".join(areas_section)
+### Áreas Visitadas
+{visited_areas}
 
-        # Debugging: Print final formatted output
-        print("\nFinal Areas Text:\n", areas_text)
-
-        formatted_summary = f"""## Resumen Ejecutivo
-
-    {summary}
-
-    ### Áreas Visitadas
-    {areas_text}
-    """
-
-        # Include confidence level if available
-        if 'confidence' in construction_analysis:
-            confidence = construction_analysis['confidence']
-            formatted_summary += f"\n**Nivel de confianza:** {confidence*100:.1f}%\n"
-
-        formatted_summary += "\n---"
-
-        return formatted_summary
+---
+"""
 
     def _format_problems_section(self, construction_analysis: Dict) -> str:
         SEVERITY_MAPPING = {

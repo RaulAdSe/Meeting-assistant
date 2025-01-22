@@ -201,6 +201,8 @@ class EnhancedBatchTranscriber:
                 location_id=location_id
             )
 
+            print("construction analysis raw", analysis_result)
+
             # Convert analysis result to dictionary format
             construction_analysis = {
                 'executive_summary': analysis_result.metadata.get('executive_summary', 
@@ -244,7 +246,7 @@ class EnhancedBatchTranscriber:
                 'session_id': session.session_id,
                 'location': location.name,
                 'transcripts': all_transcripts,
-                'analyses': {
+                'analysis': {
                     'location_data': location_data,
                     'construction_analysis': construction_analysis,
                     'timing_analysis': timing_analysis
@@ -428,6 +430,13 @@ class EnhancedBatchTranscriber:
         
     def _problem_to_dict(self, problem) -> Dict[str, Any]:
         """Convert a ConstructionProblem to dictionary format."""
+        
+        # If problem.location_context has additional_info -> raw_finding -> accion_recomendada
+        recommended_action = None
+        if problem.location_context and problem.location_context.additional_info:
+            raw_finding = problem.location_context.additional_info.get('raw_finding', {})
+            recommended_action = raw_finding.get('accion_recomendada')  # e.g. "Definir la cota necesaria ..."
+        
         return {
             'id': str(problem.id),
             'category': problem.category,
@@ -437,8 +446,11 @@ class EnhancedBatchTranscriber:
                 'area': problem.location_context.area,
                 'sub_location': problem.location_context.sub_location
             } if problem.location_context else {},
-            'status': problem.status
+            'status': problem.status,
+            # <-- Add recommended action or any other fields you want
+            'recommended_action': recommended_action
         }
+
 
     def _solution_to_dict(self, solution) -> Dict[str, Any]:
         """Convert a ProposedSolution to dictionary format."""
