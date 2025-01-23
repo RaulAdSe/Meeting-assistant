@@ -100,112 +100,129 @@ class EnhancedReportFormatter:
 """
 
     def _format_problems_section(self, construction_analysis: Dict) -> str:
+        """
+        Group problems by area, showing severity, description, recommended action,
+        and associated solutions.
+        """
         SEVERITY_MAPPING = {
-            'LOW': 'Baja', 
-            'MEDIUM': 'Media', 
-            'HIGH': 'Alta', 
+            'LOW': 'Baja',
+            'MEDIUM': 'Media',
+            'HIGH': 'Alta',
             'CRITICAL': 'Crítica',
         }
 
+        # Header
         sections = ["## Problemas Identificados y Plan de Acción\n"]
         problems_by_area = {}
 
-        if construction_analysis.get('problems'):
-            for problem in construction_analysis['problems']:
-                # -- Existing logic to read problem data --
-                if not isinstance(problem, dict):
-                    area = problem.location_context.area if problem.location_context else 'Área General'
-                    severity_raw = problem.severity.value if hasattr(problem.severity, 'value') else str(problem.severity)
-                    description = problem.description
-                    problem_id = problem.id
-                    recommended_action = (
-                        problem.location_context.additional_info.get('raw_finding', {})
-                        .get('accion_recomendada') if problem.location_context else None
-                    )
-                else:
-                    area = problem.get('location_context', {}).get('area', 'Área General')
-                    severity_raw = problem.get('severity', 'Unknown')
-                    description = problem.get('description', '')
-                    problem_id = problem.get('id')
-                    recommended_action = None
+        # 1) Extract problems list from construction_analysis
+        problems_list = construction_analysis.get('problems', [])
 
-                # -- NEW: Normalize severity to match your dictionary keys --
-                if severity_raw.startswith("Severity."):
-                    severity_raw = severity_raw.replace("Severity.", "")
-                severity_str = severity_raw.upper()  # e.g. "MEDIUM" or "HIGH"
+        print("DEBUG: Problems list extracted from construction analysis:", problems_list)
 
-                # Now map it to Spanish
-                severity_in_spanish = SEVERITY_MAPPING.get(severity_str, severity_str)
-
-                # store in problems_by_area
-                if area not in problems_by_area:
-                    problems_by_area[area] = {'problems': [], 'safety': [], 'solutions': []}
-
-                problems_by_area[area]['problems'].append({
-                    'description': description,
-                    'severity': severity_in_spanish,
-                    'id': problem_id,
-                    'recommended_action': recommended_action,
-                })
-
-                # -- Existing logic to fetch solutions --
-                if problem_id and construction_analysis.get('solutions'):
-                    solutions = construction_analysis['solutions'].get(str(problem_id), [])
-                    for solution in solutions:
-                        if isinstance(solution, dict):
-                            solution_desc = solution.get('description', '')
-                            est_time = solution.get('estimated_time')
-                            priority = solution.get('priority')
-                        else:
-                            solution_desc = solution.description
-                            est_time = solution.estimated_time
-                            priority = solution.priority
-
-                        problems_by_area[area]['solutions'].append({
-                            'description': solution_desc,
-                            'estimated_time': est_time,
-                            'problem_id': problem_id,
-                            'priority': priority
-                        })
-
-            # Format output by area
-            for area, data in problems_by_area.items():
-                sections.append(f"### {area}")
-                
-                if data['problems']:
-                    sections.append("\n#### Problemas Técnicos")
-                    for problem in data['problems']:
-                        sections.append(f"- **Problema:** {problem['description']}")
-                        sections.append(f"  - Severidad: {problem['severity']}")
-                        
-                        # Add recommended action if available
-                        if problem['recommended_action']:
-                            sections.append(f"  - Acción recomendada: {problem['accion_recomendada']}")
-                        
-                        # Add associated solutions
-                        related_solutions = [s for s in data['solutions'] if s['problem_id'] == problem['id']]
-                        if related_solutions:
-                            sections.append("  - Plan de acción:")
-                            for solution in related_solutions:
-                                priority_str = f" (Prioridad: {solution['priority']})" if solution['priority'] else ""
-                                sections.append(f"    * {solution['description']}{priority_str}")
-                                if solution['estimated_time']:
-                                    sections.append(f"      Tiempo estimado: {solution['estimated_time']} minutos")
-                    sections.append("")
-
-                if data['safety']:
-                    sections.append("#### Preocupaciones de Seguridad")
-                    for concern in data['safety']:
-                        sections.append(f"- **Riesgo:** {concern['description']}")
-                        sections.append(f"  - Prioridad: {concern['priority']}")
-                    sections.append("")
-                
-                sections.append("---\n")
-
-            if len(sections) == 1:
-                sections.append("No se han identificado problemas en esta visita.\n")
-
+        if not problems_list:
+            # No problems found
+            sections.append("No se han identificado problemas en esta visita.\n")
             return "\n".join(sections)
+
+        # 2) Group problems by area
+        for problem in problems_list:
+            # If "problem" is an object, extract fields; else read directly from dict
+            if not isinstance(problem, dict):
+                # Handling problem as object
+                area = getattr(problem.location_context, 'area', 'Área General') \
+                        if problem.location_context else 'Área General'
+                raw_severity = getattr(problem.severity, 'value', 'UNKNOWN').upper()
+                description = getattr(problem, 'description', '')
+                recommended_action = getattr(problem, 'recommended_action', None)
+                problem_id = getattr(problem, 'id', None)
+            else:
+                # Handling problem as dict
+                location_ctx = problem.get('location_context', {})
+                area = location_ctx.get('area', 'Área General')
+                raw_severity = str(problem.get('severity', 'UNKNOWN')).upper()
+                description = problem.get('description', '')
+                recommended_action = problem.get('recommended_action')
+                problem_id = problem.get('id')
+
+            # Map severity to Spanish if possible
+            if raw_severity.startswith("SEVERITY."):
+                raw_severity = raw_severity.replace("SEVERITY.", "")
+            severity = SEVERITY_MAPPING.get(raw_severity, raw_severity)
+
+            # 3) Store in dictionary structure
+            if area not in problems_by_area:
+                problems_by_area[area] = {
+                    'problems': [],
+                    'solutions': []
+                }
+
+            problems_by_area[area]['problems'].append({
+                'id': problem_id,
+                'description': description,
+                'severity': severity,
+                'recommended_action': recommended_action
+            })
+
+
+        # THE PROBLEM IS THIS IS NOT REALLY WORKING!!!!
+        # 4) Match up any solutions from construction_analysis
+
+
+        # solutions_data = construction_analysis.get('solutions', {})
+        # for area, data in problems_by_area.items():
+        #     for p in data['problems']:
+        #         pid = p['id']
+        #         if pid and str(pid) in solutions_data:
+        #             for sol in solutions_data[str(pid)]:
+        #                 # If 'sol' is a dict, extract fields normally
+        #                 if isinstance(sol, dict):
+        #                     description_sol = sol.get('description', '')
+        #                     est_time = sol.get('estimated_time')
+        #                     priority = sol.get('priority')
+        #                 else:
+        #                     # If 'sol' is an object
+        #                     description_sol = getattr(sol, 'description', '')
+        #                     est_time = getattr(sol, 'estimated_time', None)
+        #                     priority = getattr(sol, 'priority', None)
+
+        #                 data['solutions'].append({
+        #                     'problem_id': pid,
+        #                     'description': description_sol,
+        #                     'estimated_time': est_time,
+        #                     'priority': priority
+        #                 })
+
+        # 5) Generate the Markdown output
+        for area, data in problems_by_area.items():
+            sections.append(f"### {area}\n")
+            if data['problems']:
+                sections.append("#### Problemas Técnicos")
+                for problem in data['problems']:
+                    sections.append(f"- **Problema:** {problem['description']}")
+                    sections.append(f"  - Severidad: {problem['severity']}")
+                    print("DEBUG: Recommended action:", problem['recommended_action'])
+                    if problem['recommended_action']:
+                        sections.append(f"  - Acción recomendada: {problem['recommended_action']}")
+                        # Show solutions for this specific problem
+                        # related_solutions = [
+                        #     s for s in data['solutions']
+                        #     if s['problem_id'] == problem['id']
+                        # ]
+                        # if related_solutions:
+                        #     sections.append("  - Plan de acción:")
+                        #     for sol in related_solutions:
+                        #         prio_str = f" (Prioridad: {sol['priority']})" if sol['priority'] else ""
+                        #         sections.append(f"    * {sol['description']}{prio_str}")
+                        #         if sol['estimated_time']:
+                        #             sections.append(f"      Tiempo estimado: {sol['estimated_time']} minutos")
+
+                sections.append("")  # Blank line
+
+            sections.append("---\n")
+
+        return "\n".join(sections)
+
 
 
     def _get_task_properties(self, task) -> tuple:
@@ -493,16 +510,17 @@ class EnhancedReportFormatter:
 
     async def generate_comprehensive_report(
         self,
-        transcript_text: str,
-        visit_id: uuid.UUID,
-        location_id: uuid.UUID,
+        session_id: str,  # from session_results["session_id"]
+        location_id: str, # from session_results["metadata"]["location_id"]
         output_dir: Path,
         location_data: Optional[Dict[str, Any]] = None,
         construction_analysis: Optional[Dict[str, Any]] = None,
         timing_analysis: Optional[Dict[str, Any]] = None,
         chronogram: Optional[str] = None,
+        transcripts: Optional[List[str]] = None,  # if you want transcripts
         start_date: Optional[datetime] = None
     ) -> Dict[str, Path]:
+
         """Generate a comprehensive report using pre-analyzed data."""
         try:
             logger = logging.getLogger(__name__)
@@ -530,7 +548,7 @@ class EnhancedReportFormatter:
             # Save metadata
             metadata_path = output_dir / "report_metadata.json"
             metadata = {
-                "visit_id": str(visit_id),
+                "session_id": str(session_id),
                 "location_id": str(location_id),
                 "generated_at": datetime.now().isoformat(),
                 "sections": [
@@ -542,6 +560,7 @@ class EnhancedReportFormatter:
                     for section in sections
                 ]
             }
+
             metadata_path.write_text(json.dumps(metadata, indent=2))
             
             return {
@@ -562,9 +581,7 @@ class EnhancedReportFormatter:
             if section.type == "markdown":
                 parts.append(section.content)
             elif section.type == "mermaid":
-                parts.append("```mermaid")
                 parts.append(section.content)
-                parts.append("```")
             
             parts.append("")  # Add spacing between sections
             

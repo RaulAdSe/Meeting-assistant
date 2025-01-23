@@ -65,16 +65,19 @@ async def main():
             start_date=datetime.now()
         )
 
+        print("\nAnalysis complete. Starting report generation.")
+
         # 6) Now create the final report. Provide the pre-analyzed data:
         output_dir = OUTPUT_DIR / analysis_data["session_id"]
         report_files = await formatter.generate_comprehensive_report(
+            session_id=analysis_data['session_id'],
+            location_id=analysis_data['metadata']['location_id'],
             output_dir=output_dir,
-            visit_id=analysis_data["visit_id"],
-            location_id=analysis_data["location_id"],
-            location_data=analysis_data["analysis"]["location_data"],
-            construction_analysis=analysis_data["analysis"]["construction_analysis"],
-            timing_analysis=analysis_data["analysis"]["timing_analysis"],
-            chronogram=chronogram
+            location_data=analysis_data['analysis']['location_data'],
+            construction_analysis=analysis_data['analysis']['construction_analysis'],
+            timing_analysis=analysis_data['analysis']['timing_analysis'],
+            chronogram=chronogram,
+            transcripts=analysis_data['transcripts']  # Optional
         )
 
         # 7) Done! We can see where the final PDF/MD are stored:

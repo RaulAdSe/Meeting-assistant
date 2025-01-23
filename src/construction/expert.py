@@ -27,7 +27,8 @@ class ConstructionExpert:
         visit_id: uuid.UUID,
         transcript_text: str,
         location_id: uuid.UUID,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None, 
+        location_data: Dict[str, Any] = None
     ) -> AnalysisResult:
         """
         Analyze a construction site visit using transcript and historical data.
@@ -45,7 +46,9 @@ class ConstructionExpert:
         
         try:
             # Process location data
-            location_data = self.location_processor.process_transcript(transcript_text)
+
+            # NO NEED TO RERUN THIS!
+            #location_data = self.location_processor.process_transcript(transcript_text)
             
             # Create analysis context
             context = self._build_analysis_context(
@@ -81,6 +84,9 @@ class ConstructionExpert:
                 location_data=location_data
             )
 
+            print("ConstructionExpert: LLM analysis completed.")
+            print(llm_analysis)
+
                 # Make sure vision_general includes areas_visitadas
             if 'vision_general' not in llm_analysis:
                 llm_analysis['vision_general'] = {}
@@ -92,6 +98,9 @@ class ConstructionExpert:
             # Extract problems from LLM analysis
             problems = self._identify_problems(llm_analysis, context)
             
+            print("Problems identified inside construction expert:")
+            print(problems)
+
             # Generate solutions for each problem
             solutions = self._generate_solutions(problems, context)
             
@@ -158,48 +167,56 @@ class ConstructionExpert:
             metadata=metadata or {}
         )
 
-    def _identify_problems(
-        self,
-        llm_analysis: Dict[str, Any],
-        context: AnalysisContext
-    ) -> List[ConstructionProblem]:
-        """Extract and categorize problems from LLM analysis."""
+
+    # THIS NEEDS FURTHER WORK!!!
+
+
+    def _identify_problems(self, llm_analysis: Dict[str, Any], context: AnalysisContext) -> List[ConstructionProblem]:
         problems = []
-        
-        # Process technical findings
-        for finding in llm_analysis.get('technical_findings', []):
-            location_context = LocationContext(
-                area=finding.get('ubicacion', 'Unknown'),
-                sub_location=finding.get('sub_ubicacion'),
-                additional_info={'raw_finding': finding}
-            )
+        technical_findings = llm_analysis.get('technical_findings', [])
+        follow_up = llm_analysis.get('follow_up_required', [])
+        overview = llm_analysis.get('overview', {})
+        areas_visitadas = overview.get('areas_visitadas', [])
+
+        # Process technical findings and safety concerns
+        for finding in technical_findings:
+            area = finding.get('ubicacion')
             
-            # Map severity
-            severity_map = {
-                'Baja': Severity.LOW,
-                'Media': Severity.MEDIUM,
-                'Alta': Severity.HIGH,
-                'Crítica': Severity.CRITICAL
+            # Get related follow-up task and area info
+            related_task = next((task for task in follow_up if task['ubicacion'] == area), None)
+            area_info = next((area for area in areas_visitadas if area['area'] == area), None)
+            
+            additional_info = {
+                'raw_finding': finding,
+                'assigned_to': related_task.get('asignado_a') if related_task else None,
+                'observations': area_info.get('observaciones_clave', []) if area_info else [],
+                'area_problems': area_info.get('problemas_identificados', []) if area_info else [],
+                'related_tasks': [task for task in follow_up if task['ubicacion'] == area]
             }
-            severity = severity_map.get(finding.get('severidad', 'Media'), Severity.MEDIUM)
-            
-            # Determine category based on finding content
-            category = self._categorize_problem(finding.get('hallazgo', ''))
-            
+
             problem = ConstructionProblem(
-                category=category,
-                description=finding.get('hallazgo', ''),
-                severity=severity,
-                location_context=location_context,
+                category=self._categorize_problem(finding['hallazgo']),
+                description=finding['hallazgo'],
+                severity=self._map_severity(finding.get('severidad', 'Media')),
+                location_context=LocationContext(
+                    area=area,
+                    sub_location=finding.get('sub_ubicacion'),
+                    additional_info=additional_info
+                ),
                 status=ProblemStatus.IDENTIFIED,
                 confidence=AnalysisConfidence.MEDIUM
             )
             problems.append(problem)
-            
-        # Look for historical patterns
-        self._analyze_historical_patterns(problems, context)
-        
+
         return problems
+
+    def _map_severity(self, severity: str) -> Severity:
+        return {
+            'Baja': Severity.LOW,
+            'Media': Severity.MEDIUM,
+            'Alta': Severity.HIGH,
+            'Crítica': Severity.CRITICAL
+        }.get(severity, Severity.MEDIUM)
 
     def _categorize_problem(self, description: str) -> ProblemCategory:
         """Categorize problem based on description."""
@@ -219,7 +236,9 @@ class ConstructionExpert:
                 return category
         
         return ProblemCategory.OTHER
+    
 
+    # I DO NOT THINK THIS WORKS
     def _generate_solutions(
         self,
         problems: List[ConstructionProblem],

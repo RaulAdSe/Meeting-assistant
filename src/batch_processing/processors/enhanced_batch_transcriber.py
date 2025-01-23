@@ -193,12 +193,14 @@ class EnhancedBatchTranscriber:
             # Step 1: Process location data
             location_data = self.location_processor.process_transcript(combined_transcript)
             
+            # THIS IS CALLING LOCATION PROCESSOR AGAIN!!! WHY?!
             # Step 2: Perform construction analysis
             visit_id = uuid.uuid4()
             analysis_result = self.construction_expert.analyze_visit(
                 visit_id=visit_id,
                 transcript_text=combined_transcript,
-                location_id=location_id
+                location_id=location_id,
+                location_data=location_data
             )
 
             print("construction analysis raw", analysis_result)
@@ -214,7 +216,7 @@ class EnhancedBatchTranscriber:
                 },
                 'confidence_scores': analysis_result.confidence_scores,
                 'metadata': analysis_result.metadata,
-                'hallazgos_tecnicos': analysis_result.metadata.get('hallazgos_tecnicos', [])
+                'hallazgos_tecnicos': analysis_result.metadata.get('hallazgos_tecnicos', []),
             }
 
             # Step 3: Process timing analysis
@@ -223,24 +225,31 @@ class EnhancedBatchTranscriber:
                 location_id=location_id
             )
 
+            print("timing analysis raw", timing_analysis)
+
             # Step 4: Generate chronogram
             chronogram = self.report_formatter.chronogram_visualizer.generate_mermaid_gantt(
                 timing_analysis,
                 start_date=datetime.now()
             )
 
+            """"" 
+            # THIS IS DONE IN THE MAIN SCRIPT
             # Step 5: Generate comprehensive report with all pre-analyzed data
             report_files = await self.report_formatter.generate_comprehensive_report(
-                transcript_text=combined_transcript,
-                visit_id=visit_id,
-                location_id=location_id,
+                session_id=session.session_id,              # pass session_id from the session
+                location_id=str(location_id),               # must be a string
                 output_dir=output_dir,
                 location_data=location_data,
                 construction_analysis=construction_analysis,
                 timing_analysis=timing_analysis,
-                chronogram=chronogram
+                chronogram=chronogram,
+                transcripts=all_transcripts,  # optional; only if you want them in your report
+                start_date=datetime.now()     # optional
             )
+            """
 
+            """""
             # Prepare final results
             session_results = {
                 'session_id': session.session_id,
@@ -251,7 +260,7 @@ class EnhancedBatchTranscriber:
                     'construction_analysis': construction_analysis,
                     'timing_analysis': timing_analysis
                 },
-                'reports': report_files,
+                #'reports': report_files,
                 'metadata': {
                     'total_files': len(session.files),
                     'total_duration': session.total_duration,
@@ -259,6 +268,69 @@ class EnhancedBatchTranscriber:
                     'location_id': str(location_id)
                 }
             }
+            """
+
+            session_results = {
+    'session_id': session.session_id,
+    'location': location.name,
+    'transcripts': all_transcripts,
+    'analysis': {
+        'location_data': location_data,
+        'construction_analysis': {
+            'executive_summary': analysis_result.metadata.get('executive_summary'),
+            'problems': [
+                {
+                    'id': str(p.id),
+                    'category': p.category,
+                    'description': p.description,
+                    'severity': p.severity,
+                    'location_context': {
+                        'area': p.location_context.area,
+                        'sub_location': p.location_context.sub_location,
+                        'observations': p.location_context.additional_info.get('observations', []),
+                        'area_problems': p.location_context.additional_info.get('area_problems', [])
+                    },
+                    'status': p.status,
+                    'recommended_action': p.location_context.additional_info.get('raw_finding', {}).get('accion_recomendada'),
+                    'assigned_to': p.location_context.additional_info.get('assigned_to'),
+                    'tasks': p.location_context.additional_info.get('related_tasks', [])
+                } 
+                for p in analysis_result.problems
+            ],
+            'solutions': analysis_result.solutions,
+            'confidence_scores': analysis_result.confidence_scores,
+            'vision_general': {
+                'areas_visitadas': [
+                    {
+                        'area': area.get('area'),
+                        'observaciones_clave': area.get('observaciones_clave', []),
+                        'problemas_identificados': area.get('problemas_identificados', [])
+                    }
+                    for area in analysis_result.metadata.get('vision_general', {}).get('areas_visitadas', [])
+                ],
+                'obra_principal': location_data.get('main_site', {})
+            },
+            'tareas_pendientes': [
+                {
+                    'ubicacion': task.get('ubicacion'),
+                    'tarea': task.get('tarea'),
+                    'asignado_a': task.get('asignado_a'),
+                    'prioridad': task.get('prioridad'),
+                    'plazo': task.get('plazo')
+                }
+                for task in analysis_result.metadata.get('tareas_pendientes', [])
+            ],
+            'observaciones_generales': analysis_result.metadata.get('observaciones_generales', [])
+        },
+        'timing_analysis': timing_analysis,
+        'metadata': {
+            'total_files': len(session.files),
+            'total_duration': session.total_duration,
+            'notes': session.notes,
+            'location_id': str(location_id)
+        }
+    }
+}
 
             print("Session processing completed. Results summary:")
             print(session_results)
@@ -300,6 +372,9 @@ class EnhancedBatchTranscriber:
             
             transcript_data = self.get_transcript_data(transcript_result)
             
+
+            # THIS SHOULD BE DONE IN A SEPARATE FUNCTION
+            """""
             # Process location with timing data
             location_data = self.location_processor.process_transcript(
                 transcript_text=transcript_text,
@@ -328,27 +403,11 @@ class EnhancedBatchTranscriber:
                 transcript_text=transcript_text,
                 location_id=location_id
             )
-                
+            """
             return {
                 'transcript': transcript_result['transcript'],
-                'construction_analysis': {
-                    'problems': construction_analysis.problems,
-                    'solutions': construction_analysis.solutions,
-                    'confidence_scores': construction_analysis.confidence_scores
-                },
-                'timing_analysis': {
-                    'tasks': timing_analysis.tasks,
-                    'relationships': timing_analysis.relationships,
-                    'parallel_groups': timing_analysis.parallel_groups
-                },
-                'location_data': location_data,
-                'metadata': {
-                    **transcript_result['metadata'],
-                    'visit_id': str(visit_id),
-                    'location_id': str(location_id),
-                    'analyzed_at': datetime.now().isoformat()
-                }
-            }
+                'transcript_data': transcript_data}
+    
                 
         except Exception as e:
             self.logger.error(f"Error processing audio {audio_path}: {str(e)}")
@@ -429,14 +488,14 @@ class EnhancedBatchTranscriber:
             raise
         
     def _problem_to_dict(self, problem) -> Dict[str, Any]:
-        """Convert a ConstructionProblem to dictionary format."""
-        
-        # If problem.location_context has additional_info -> raw_finding -> accion_recomendada
+        # Get both recommended_action and assigned_to from additional_info
         recommended_action = None
+        assigned_to = None
         if problem.location_context and problem.location_context.additional_info:
             raw_finding = problem.location_context.additional_info.get('raw_finding', {})
-            recommended_action = raw_finding.get('accion_recomendada')  # e.g. "Definir la cota necesaria ..."
-        
+            recommended_action = raw_finding.get('accion_recomendada')
+            assigned_to = problem.location_context.additional_info.get('assigned_to')
+
         return {
             'id': str(problem.id),
             'category': problem.category,
@@ -447,8 +506,8 @@ class EnhancedBatchTranscriber:
                 'sub_location': problem.location_context.sub_location
             } if problem.location_context else {},
             'status': problem.status,
-            # <-- Add recommended action or any other fields you want
-            'recommended_action': recommended_action
+            'recommended_action': recommended_action,
+            'assigned_to': assigned_to  # Add this field
         }
 
 

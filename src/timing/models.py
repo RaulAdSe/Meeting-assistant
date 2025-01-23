@@ -111,7 +111,8 @@ class ScheduleGraph:
     tasks: Dict[uuid.UUID, Task]
     relationships: List[TaskRelationship]
     parallel_groups: List[Set[uuid.UUID]] = field(default_factory=list)
-
+    pending_tasks: List[Dict] = field(default_factory=list)  # Renamed to avoid conflict
+    
     def add_task(self, task: Task):
         """Add a task to the schedule"""
         self.tasks[task.id] = task
@@ -123,3 +124,7 @@ class ScheduleGraph:
     def add_parallel_group(self, task_ids: Set[uuid.UUID]):
         """Add a group of tasks that can be executed in parallel"""
         self.parallel_groups.append(task_ids)
+
+    def add_pending_task(self, task: Dict):
+        """Add a pending task with location and assignee info"""
+        self.pending_tasks.append(task)

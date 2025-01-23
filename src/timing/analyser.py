@@ -481,6 +481,10 @@ class TaskAnalyzer:
             task_ids[task_data['name']] = task.id
             normalized_name = self._normalize_task_name(task_data['name'])
             task_name_map[normalized_name] = task.id
+
+            if 'tareas_pendientes' in response:
+                schedule.pending_tasks = response['tareas_pendientes']
+            return schedule
         
         # Second pass: Create relationships with robust name matching
         for rel_data in response.get('relationships', []):

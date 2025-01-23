@@ -1,4 +1,17 @@
-openai-whisper==20231117
-numpy>=1.24.3
-pydub>=0.25.1
-pytest>=7.4.0
+INFO:src.report_generation.llm_service:Raw API response: {"resumen_ejecutivo":"Durante la visita de obra se identificaron varias áreas de atención, incluyendo problemas técnicos relacionados con el terraplenado y la estabilización de terrenos, así como preocupaciones de seguridad en zonas específicas. Se discutieron tareas pendientes y la necesidad de coordinar con diferentes equipos para avanzar en la construcción.",
+
+"vision_general":{"obra_principal":"Construcción de infraestructura en la zona entre la carretera y la nave","areas_visitadas":[{"area":"Cajonados para pilotes","observaciones_clave":["Confirmación de trabajos por parte de Rivera en la tarde","Dificultades con el agua en el terraplenado"],
+
+"problemas_identificados":["Agua acumulada en el área de trabajo","Terreno no estabilizado"]},{"area":"Zona del hotel","observaciones_clave":["Falta de tierra vegetal","Necesidad de enviar tierra al vertedero"],
+"problemas_identificados":["Tierra no retirada adecuadamente"]},{"area":"Primafrio Vilamaya","observaciones_clave":["Relleno pendiente entre nave y carretera","Parada en la realización de la rocalla"],
+"problemas_identificados":["Intervención en la zona de estabilizado del hotel","Definición de cota en la nave congelada"]},{"area":"Zona de preforos","observaciones_clave":["Máquina de preforos en operación","Progreso del 50% en preforos"],
+"problemas_identificados":["Retraso en la finalización de preforos"]}]},"hallazgos_tecnicos":[{"ubicacion":"Zona entre carretera y nave","hallazgo":"Agua acumulada dificultando el terraplenado","severidad":"Media",
+"accion_recomendada":"Implementar un sistema de drenaje temporal para evitar acumulación de agua."},{"ubicacion":"Zona del hotel","hallazgo":"Falta de estabilización del terreno","severidad":"Alta",
+"accion_recomendada":"Realizar estabilización del terreno antes de continuar con la construcción."},{"ubicacion":"Zona de preforos","hallazgo":"Retraso en la finalización de preforos","severidad":"Media",
+"accion_recomendada":"Acelerar el proceso de perforación y coordinar con el equipo para cumplir plazos."}],
+"preocupaciones_seguridad":[{"ubicacion":"Zona sensible de carga","preocupacion":"Marcado de ruedas en la zona sensible","prioridad":"Alta","mitigacion":"Instalar placas de carga para evitar daños en el terreno."},{"ubicacion":"Zona de terraplenado",
+"preocupacion":"Condiciones inestables debido a agua acumulada","prioridad":"Alta","mitigacion":"Monitorear condiciones del terreno y detener trabajos si es necesario."}],
+
+"tareas_pendientes":[
+{"ubicacion":"Zona del hotel","tarea":"Retirar tierra vegetal y enviar al vertedero","asignado_a":"Rivera","prioridad":"Alta","plazo":"Inmediato"},{"ubicacion":"Zona de preforos","tarea":"Completar preforos y comenzar encado de pilotes","asignado_a":"Equipo de perforación","prioridad":"Alta","plazo":"Viernes"},
+{"ubicacion":"Zona entre nave y carretera","tarea":"Rellenar la zona de urbanización","asignado_a":"Equipo de construcción","prioridad":"Media","plazo":"Próxima semana"}],"observaciones_generales":["Se requiere coordinación con el C-CAM para el informe solicitado.","Necesidad de definir el uso de cal de pipa como subbase."]}
