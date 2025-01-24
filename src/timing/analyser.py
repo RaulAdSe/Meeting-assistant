@@ -221,7 +221,7 @@ class TaskAnalyzer:
                     }
                 }],
                 function_call={"name": "extract_construction_tasks"},
-                temperature=0.3
+                temperature=0.1
             )
 
             # Parse GPT response
