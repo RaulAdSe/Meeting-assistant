@@ -28,7 +28,7 @@ class ConstructionExpert:
         transcript_text: str,
         location_id: uuid.UUID,
         metadata: Optional[Dict[str, Any]] = None, 
-        location_data: Dict[str, Any] = None
+        location_data: Dict[str, Any] = {}
     ) -> AnalysisResult:
         """
         Analyze a construction site visit using transcript and historical data.
@@ -174,18 +174,28 @@ class ConstructionExpert:
     def _identify_problems(self, llm_analysis: Dict[str, Any], context: AnalysisContext) -> List[ConstructionProblem]:
         problems = []
         technical_findings = llm_analysis.get('technical_findings', [])
+        #areas_data = llm_analysis.get('vision_general', {})
+        areas_data = llm_analysis['overview']['areas_visitadas']
         follow_up = llm_analysis.get('follow_up_required', [])
-        overview = llm_analysis.get('overview', {})
-        areas_visitadas = overview.get('areas_visitadas', [])
 
-        # Process technical findings and safety concerns
+        # Process technical findings
         for finding in technical_findings:
             area = finding.get('ubicacion')
             
-            # Get related follow-up task and area info
-            related_task = next((task for task in follow_up if task['ubicacion'] == area), None)
-            area_info = next((area for area in areas_visitadas if area['area'] == area), None)
+            # Find matching area data
+            area_info = next((
+                area_data for area_data in areas_data 
+                if area_data['area'] == area
+            ), None)
+
+            print("Area info::", area_info)
             
+            # Find related follow-up task
+            related_task = next((
+                task for task in follow_up 
+                if task['ubicacion'] == area
+            ), None)
+
             additional_info = {
                 'raw_finding': finding,
                 'assigned_to': related_task.get('asignado_a') if related_task else None,
@@ -207,6 +217,37 @@ class ConstructionExpert:
                 confidence=AnalysisConfidence.MEDIUM
             )
             problems.append(problem)
+
+        # Also process area-specific problems from vision_general
+        for area_data in areas_data:
+            for problem_desc in area_data.get('problemas_identificados', []):
+                if not any(p.description == problem_desc for p in problems):
+                    related_task = next((
+                        task for task in follow_up 
+                        if task['ubicacion'] == area_data['area']
+                    ), None)
+                    
+                    additional_info = {
+                        'observations': area_data.get('observaciones_clave', []),
+                        'assigned_to': related_task.get('asignado_a') if related_task else None,
+                        'related_tasks': [
+                            task for task in follow_up 
+                            if task['ubicacion'] == area_data['area']
+                        ]
+                    }
+
+                    problem = ConstructionProblem(
+                        category=self._categorize_problem(problem_desc),
+                        description=problem_desc,
+                        severity=Severity.MEDIUM,  # Default severity
+                        location_context=LocationContext(
+                            area=area_data['area'],
+                            additional_info=additional_info
+                        ),
+                        status=ProblemStatus.IDENTIFIED,
+                        confidence=AnalysisConfidence.MEDIUM
+                    )
+                    problems.append(problem)
 
         return problems
 

@@ -532,6 +532,9 @@ class EnhancedReportFormatter:
                 timing_analysis=timing_analysis,
                 chronogram=chronogram
             )
+
+            print("DEBUG: Generated report sections")
+            print(sections)
             
             # Generate report files
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -541,9 +544,13 @@ class EnhancedReportFormatter:
             markdown_content = self._generate_markdown(sections)
             markdown_path.write_text(markdown_content, encoding='utf-8')
             
+            print("DEBUG: Generated markdown content")
+
             # Generate PDF
             pdf_path = output_dir / "report.pdf"
             await self._generate_pdf(markdown_content, pdf_path)
+
+            print("DEBUG: Generated PDF")
             
             # Save metadata
             metadata_path = output_dir / "report_metadata.json"
