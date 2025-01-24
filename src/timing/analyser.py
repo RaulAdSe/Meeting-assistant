@@ -54,15 +54,24 @@ class TaskAnalyzer:
             # Use GPT with historical context for initial analysis
             initial_schedule = self._analyze_with_gpt(transcript_text, historical_context)
             
+            print("Initial schedule:")
+            print(initial_schedule)
+
             # Enhance schedule with historical insights
             enhanced_schedule = self._enhance_with_historical_data(
                 initial_schedule,
                 historical_context
             )
+
+            print("Enhanced schedule:")
+            print(enhanced_schedule)
             
             # Validate and adjust timings
             final_schedule = self._validate_and_adjust_schedule(enhanced_schedule)
             
+            print("Final schedule:")
+            print(final_schedule)
+
             return final_schedule
             
         except Exception as e:
@@ -225,8 +234,16 @@ class TaskAnalyzer:
             )
 
             # Parse GPT response
+
+
             try:
                 gpt_data = json.loads(response.choices[0].message.function_call.arguments)
+                print("GPT data task-temporal agent:")
+                print(gpt_data)
+
+                print("GPT data parsed")
+                print(self._create_schedule_from_gpt_response(gpt_data))
+
                 return self._create_schedule_from_gpt_response(gpt_data)
                 
             except (json.JSONDecodeError, AttributeError, IndexError) as e:
@@ -443,31 +460,24 @@ class TaskAnalyzer:
 
 
     def _create_schedule_from_gpt_response(self, response: Dict) -> ScheduleGraph:
-        """Create ScheduleGraph from GPT response with improved task name matching"""
         schedule = ScheduleGraph(tasks={}, relationships=[])
         task_ids = {}
-        task_name_map = {}  # Map for fuzzy matching task names
+        task_name_map = {}
         
         # First pass: Create all tasks
         for task_data in response.get('tasks', []):
-            # Add default values and handle missing duration data safely
             duration_data = task_data.get('duration', {'amount': 1, 'unit': 'days'})
-
-            # Ensure responsible person is captured
             responsible = task_data.get('responsible') or task_data.get('assignee')
-            
-
-            # Ensure confidence is a float if present
             confidence = task_data.get('confidence')
             if confidence is not None:
                 confidence = float(confidence)
-            
+                
             task = Task(
                 name=task_data['name'],
                 description=task_data.get('description', ''),
                 duration=Duration(**duration_data),
                 can_be_parallel=task_data.get('can_be_parallel', False),
-                responsible=task_data.get('responsible'),
+                responsible=responsible,
                 location=task_data.get('location'),
                 metadata={
                     'confidence': confidence,
@@ -476,23 +486,19 @@ class TaskAnalyzer:
                 }
             )
             schedule.add_task(task)
-            
-            # Store both exact and normalized task names for matching
             task_ids[task_data['name']] = task.id
             normalized_name = self._normalize_task_name(task_data['name'])
             task_name_map[normalized_name] = task.id
 
-            if 'tareas_pendientes' in response:
-                schedule.pending_tasks = response['tareas_pendientes']
-            return schedule
-        
+        # Add pending tasks 
+        if 'tareas_pendientes' in response:
+            schedule.pending_tasks = response['tareas_pendientes']
+
         # Second pass: Create relationships with robust name matching
         for rel_data in response.get('relationships', []):
             try:
-                # Try to find task IDs using various matching methods
                 from_id = self._find_task_id(rel_data['from_task'], task_ids, task_name_map)
                 to_id = self._find_task_id(rel_data['to_task'], task_ids, task_name_map)
-                
                 if from_id and to_id:
                     rel_type = TaskRelationType[rel_data['type'].upper()]
                     relationship = TaskRelationship(
@@ -509,7 +515,7 @@ class TaskAnalyzer:
             except Exception as e:
                 self.logger.warning(f"Error creating relationship {rel_data}: {str(e)}")
                 continue
-        
+
         # Add parallel groups with robust name matching
         for group in response.get('parallel_groups', []):
             try:
@@ -520,13 +526,12 @@ class TaskAnalyzer:
                         task_group.add(task_id)
                     else:
                         self.logger.warning(f"Task not found for parallel group: {task_name}")
-                
                 if task_group and self._validate_parallel_group_feasibility(task_group, schedule):
                     schedule.add_parallel_group(task_group)
             except Exception as e:
                 self.logger.warning(f"Error creating parallel group {group}: {str(e)}")
                 continue
-        
+                
         return schedule
 
     def _normalize_task_name(self, name: str) -> str:

@@ -82,12 +82,12 @@ class EnhancedReportFormatter:
     
     def _format_executive_summary(self, construction_analysis: dict, location_data: dict) -> str:
         summary = construction_analysis.get('executive_summary', 'No summary available.')
-        extracted_locations = location_data.get('extracted_locations', [])
-        if extracted_locations:
-            area_names = [loc.get('location') for loc in extracted_locations]
-            visited_areas = ", ".join(area for area in area_names if area)
-        else:
-            visited_areas = "No se visitaron áreas"
+        areas = []
+        if location_data.get('extracted_locations'):
+            areas.extend(loc.get('location') for loc in location_data['extracted_locations'] if loc.get('location'))
+        if construction_analysis.get('vision_general', {}).get('areas_visitadas'):
+            areas.extend(area.get('area') for area in construction_analysis['vision_general']['areas_visitadas'] if area.get('area'))
+        visited_areas = ", ".join(set(areas)) or "No se visitaron áreas"
 
         return f"""## Resumen Ejecutivo
 
@@ -100,168 +100,79 @@ class EnhancedReportFormatter:
 """
 
     def _format_problems_section(self, construction_analysis: Dict) -> str:
-        """
-        Group problems by area, showing severity, description, recommended action,
-        assigned_to, observations, sub-tasks, and associated solutions.
-        """
-        SEVERITY_MAPPING = {
-            'LOW': 'Baja',
-            'MEDIUM': 'Media',
-            'HIGH': 'Alta',
-            'CRITICAL': 'Crítica',
-        }
-
-        # Header
+        """Format problems section handling both objects and dicts"""
         sections = ["## Problemas Identificados y Plan de Acción\n"]
         problems_by_area = {}
 
-        # 1) Extract problems list from construction_analysis
+        # Extract and normalize problems
         problems_list = construction_analysis.get('problems', [])
         if not problems_list:
             sections.append("No se han identificado problemas en esta visita.\n")
             return "\n".join(sections)
 
-        # 2) Group problems by area
+        # Group problems by area
         for problem in problems_list:
-            if not isinstance(problem, dict):
-                # Handling problem as an object
-                area = getattr(problem.location_context, 'area', 'Área General') \
-                        if problem.location_context else 'Área General'
-                raw_severity = getattr(problem.severity, 'value', 'UNKNOWN').upper()
-                description = getattr(problem, 'description', '')
-                recommended_action = getattr(problem, 'recommended_action', None)
-                assigned_to = getattr(problem, 'assigned_to', 'No asignado')
-                problem_id = getattr(problem, 'id', None)
-                # Observations from location_context if relevant
-                location_ctx = getattr(problem, 'location_context', {}) or {}
-                observations = getattr(location_ctx, 'observations', [])
-                # Sub-tasks if relevant
-                tasks = getattr(problem, 'tasks', [])
-            else:
-                # Handling problem as dict
-                location_ctx = problem.get('location_context', {})
-                area = location_ctx.get('area', 'Área General')
-                raw_severity = str(problem.get('severity', 'UNKNOWN')).upper()
-                description = problem.get('description', '')
-                recommended_action = problem.get('recommended_action')
-                assigned_to = problem.get('assigned_to', 'No asignado')
-                problem_id = problem.get('id')
-                observations = location_ctx.get('observations', [])
-                tasks = problem.get('tasks', [])
-
-            # Map severity to Spanish if possible
-            if raw_severity.startswith("SEVERITY."):
-                raw_severity = raw_severity.replace("SEVERITY.", "")
-            severity = SEVERITY_MAPPING.get(raw_severity, raw_severity)
-
-            # 3) Initialize the area dictionary if not present
+            problem_data = self._get_problem_data(problem)
+            area = problem_data['location_context']['area']
+            
             if area not in problems_by_area:
                 problems_by_area[area] = {
                     'problems': [],
                     'solutions': []
                 }
+            
+            problems_by_area[area]['problems'].append(problem_data)
 
-            # Collect the problem data
-            problems_by_area[area]['problems'].append({
-                'id': problem_id,
-                'description': description,
-                'severity': severity,
-                'recommended_action': recommended_action,
-                'assigned_to': assigned_to,
-                'observations': observations,
-                'tasks': tasks
-            })
-
-        # 4) Match up solutions from construction_analysis
-        #    (Uncomment or re-enable your existing logic to store solutions by area/prob)
+        # Get solutions
         solutions_data = construction_analysis.get('solutions', {})
+        for area_data in problems_by_area.values():
+            for problem in area_data['problems']:
+                solutions = self._get_solutions(problem['id'], solutions_data)
+                area_data['solutions'].extend(solutions)
 
-        # solutions_data is typically a dict where keys are UUIDs
-        # and values are lists of ProposedSolution objects or dicts.
-        for area_name, data in problems_by_area.items():
-            for p in data['problems']:
-                pid = p['id']
-                if pid in solutions_data:  # direct membership check for matching UUID key
-                    # Gather solutions for this problem
-                    for sol in solutions_data[pid]:
-                        if isinstance(sol, dict):
-                            description_sol = sol.get('description', '')
-                            est_time = sol.get('estimated_time')
-                            priority = sol.get('priority')
-                        else:
-                            # If 'sol' is an object
-                            description_sol = getattr(sol, 'description', '')
-                            est_time = getattr(sol, 'estimated_time', None)
-                            priority = getattr(sol, 'priority', None)
-
-                        data['solutions'].append({
-                            'problem_id': pid,
-                            'description': description_sol,
-                            'estimated_time': est_time,
-                            'priority': priority
-                        })
-
-        # 5) Generate the Markdown output
-        sections.append("")  # some spacing if needed
+        # Generate markdown
         for area, data in problems_by_area.items():
             sections.append(f"### {area}\n")
-            if data['problems']:
-                sections.append("#### Problemas Técnicos")
-                for problem in data['problems']:
-                    sections.append(f"- **Problema:** {problem['description']}")
-                    sections.append(f"  - Severidad: {problem['severity']}")
-
-                    # Print recommended action if present
-                    if problem['recommended_action']:
-                        sections.append(f"  - Acción recomendada: {problem['recommended_action']}")
-
-                    # Print who is assigned
-                    if problem['assigned_to']:
-                        sections.append(f"  - Asignado a: {problem['assigned_to']}")
-
-                    # Print location_context observations
-                    if problem['observations']:
-                        sections.append(f"  - Observaciones en la zona:")
-                        for obs in problem['observations']:
-                            sections.append(f"    * {obs}")
-
-                    # If there are sub-tasks, print them
-                    if problem['tasks']:
-                        sections.append("  - Tareas relacionadas:")
-                        for t in problem['tasks']:
-                            # For clarity, show each field in bullet
-                            tarea = t.get('tarea', 'Tarea no especificada')
-                            ubic = t.get('ubicacion', 'Ubicación no especificada')
-                            asig = t.get('asignado_a', 'No asignado')
-                            prio = t.get('prioridad', 'Sin prioridad')
-                            plazo = t.get('plazo', 'Sin plazo')
-                            sections.append(f"    * {tarea}")
-                            sections.append(f"      - Ubicación: {ubic}")
-                            sections.append(f"      - Asignado a: {asig}")
-                            sections.append(f"      - Prioridad: {prio}")
-                            sections.append(f"      - Plazo: {plazo}")
-
-                    # Show solutions for this specific problem
-                    related_solutions = [
-                        s for s in data['solutions']
-                        if s['problem_id'] == problem['id']
-                    ]
-                    if related_solutions:
-                        sections.append("  - **Soluciones Propuestas**:")
-                        for sol in related_solutions:
-                            prio_str = f"(Prioridad: {sol['priority']}) " if sol['priority'] else ""
-                            sections.append(f"    * {sol['description']} {prio_str}".rstrip())
-                            if sol['estimated_time']:
-                                sections.append(f"      Tiempo estimado: {sol['estimated_time']}")
-
-                    sections.append("")  # Blank line between problems
-
-            sections.append("---\n")  # Separator between different areas
+            sections.append("#### Problemas Técnicos")
+            
+            for problem in data['problems']:
+                sections.append(f"- **Problema:** {problem['description']}")
+                sections.append(f"  - Severidad: {problem['severity']}")
+                
+                if problem['recommended_action']:
+                    sections.append(f"  - Acción recomendada: {problem['recommended_action']}")
+                
+                sections.append(f"  - Asignado a: {problem['assigned_to']}")
+                
+                if problem['location_context']['observations']:
+                    sections.append("  - Observaciones en la zona:")
+                    for obs in problem['location_context']['observations']:
+                        sections.append(f"    * {obs}")
+                
+                # Add tasks
+                if problem['tasks']:
+                    sections.append("  - Tareas relacionadas:")
+                    for task in problem['tasks']:
+                        sections.append(f"    * {task['tarea']}")
+                        sections.append(f"      - Ubicación: {task['ubicacion']}")
+                        sections.append(f"      - Asignado a: {task['asignado_a']}")
+                        sections.append(f"      - Prioridad: {task['prioridad']}")
+                        sections.append(f"      - Plazo: {task['plazo']}")
+                
+                # Add solutions
+                solutions = [s for s in data['solutions'] if s['problem_id'] == problem['id']]
+                if solutions:
+                    sections.append("  - **Soluciones Propuestas:**")
+                    for solution in solutions:
+                        sections.append(f"    * {solution['description']}")
+                        if solution.get('estimated_time'):
+                            sections.append(f"      Tiempo estimado: {solution['estimated_time']}")
+                
+                sections.append("")
+            
+            sections.append("---\n")
 
         return "\n".join(sections)
-
-
-
 
     def _get_task_properties(self, task) -> tuple:
         """Extract task properties safely whether task is a dict or Task object"""
@@ -688,3 +599,61 @@ class EnhancedReportFormatter:
         except Exception as e:
             self.logger.error(f"Error generating PDF: {str(e)}")
             raise
+
+
+    def _get_problem_data(self, problem) -> Dict:
+        """Extract problem data handling both dict and object formats"""
+        if isinstance(problem, dict):
+            loc_context = problem.get('location_context', {})
+            return {
+                'id': str(problem.get('id')),
+                'description': problem.get('description'),
+                'severity': str(problem.get('severity', 'UNKNOWN')),
+                'location_context': {
+                    'area': loc_context.get('area', 'Área General'),
+                    'observations': loc_context.get('observations', []),
+                    'additional_info': loc_context.get('additional_info', {})
+                },
+                'recommended_action': problem.get('recommended_action'),
+                'assigned_to': problem.get('assigned_to', 'No asignado'),
+                'tasks': problem.get('tasks', [])
+            }
+        
+        # Handle object
+        loc_context = problem.location_context if problem.location_context else {}
+        return {
+            'id': str(problem.id),
+            'description': problem.description,
+            'severity': str(getattr(problem.severity, 'value', 'UNKNOWN')),
+            'location_context': {
+                'area': getattr(loc_context, 'area', 'Área General'),
+                'observations': getattr(loc_context, 'observations', []),
+                'additional_info': getattr(loc_context, 'additional_info', {})
+            },
+            'recommended_action': getattr(problem, 'recommended_action', None),
+            'assigned_to': getattr(problem, 'assigned_to', 'No asignado'),
+            'tasks': getattr(problem, 'tasks', [])
+        }
+    
+    def _get_solutions(self, problem_id: str, solutions_data: Dict) -> List[Dict]:
+        """Extract solutions for a specific problem"""
+        solutions = []
+        for sol_id, sol_list in solutions_data.items():
+            if str(sol_id) == problem_id:
+                for sol in sol_list:
+                    if isinstance(sol, dict):
+                        solution = {
+                            'problem_id': problem_id,
+                            'description': sol.get('description', ''),
+                            'estimated_time': sol.get('estimated_time'),
+                            'priority': sol.get('priority')
+                        }
+                    else:
+                        solution = {
+                            'problem_id': problem_id,
+                            'description': getattr(sol, 'description', ''),
+                            'estimated_time': getattr(sol, 'estimated_time', None),
+                            'priority': getattr(sol, 'priority', None)
+                        }
+                    solutions.append(solution)
+        return solutions
