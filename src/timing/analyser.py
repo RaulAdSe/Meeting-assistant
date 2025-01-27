@@ -53,24 +53,15 @@ class TaskAnalyzer:
             
             # Use GPT with historical context for initial analysis
             initial_schedule = self._analyze_with_gpt(transcript_text, historical_context)
-            
-            print("Initial schedule:")
-            print(initial_schedule)
 
             # Enhance schedule with historical insights
             enhanced_schedule = self._enhance_with_historical_data(
                 initial_schedule,
                 historical_context
             )
-
-            print("Enhanced schedule:")
-            print(enhanced_schedule)
             
             # Validate and adjust timings
             final_schedule = self._validate_and_adjust_schedule(enhanced_schedule)
-            
-            print("Final schedule:")
-            print(final_schedule)
 
             return final_schedule
             
@@ -230,7 +221,7 @@ class TaskAnalyzer:
                     }
                 }],
                 function_call={"name": "extract_construction_tasks"},
-                temperature=0.1
+                temperature=0.0
             )
 
             # Parse GPT response

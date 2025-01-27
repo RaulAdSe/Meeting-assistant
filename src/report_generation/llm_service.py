@@ -134,7 +134,7 @@ class LLMService:
                     }
                 }],
                 function_call={"name": "analizar_visita_obra"},
-                temperature=0.3
+                temperature=0.0
             )
             
             # Parse and structure the response
