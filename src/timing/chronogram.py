@@ -10,7 +10,7 @@ class ChronogramVisualizer:
     def generate_mermaid_gantt(self, schedule: ScheduleGraph, start_date: datetime) -> str:
         """Generate a more organized Mermaid.js Gantt diagram."""
         lines = [
-            "    %% Organizado por áreas y tipos de trabajo",
+            "   Organigrama por áreas y tipos de trabajo",
             ""
         ]
 
@@ -42,7 +42,7 @@ class ChronogramVisualizer:
                         dep_task = schedule.tasks[rel.from_task_id]
                         dependencies.append(dep_task.name)
                 
-                dependency_str = f" after {', '.join(dependencies)}" if dependencies else ""
+                dependency_str = f" después {', '.join(dependencies)}" if dependencies else ""
                 
                 # Add indicators
                 indicators = []
@@ -67,9 +67,9 @@ class ChronogramVisualizer:
 
         # Add legend
         lines.extend([
-            "    section Leyenda",
-            "    🚨 Tarea con riesgos identificados : milestone, 0d",
-            "    ⚡ Tarea que puede ejecutarse en paralelo : milestone, 0d",
+            "     Leyenda",
+            "    🚨 Tarea con riesgos identificados",
+            "    ⚡ Tarea que puede ejecutarse en paralelo",
             ""
         ])
 

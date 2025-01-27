@@ -622,9 +622,12 @@ class EnhancedReportFormatter:
             # Generate PDF
             pdf_path = output_dir / "report.pdf"
             await self._generate_pdf(markdown_content, pdf_path)
-
             print("DEBUG: Generated PDF")
-            
+
+            docx_path = output_dir / "report.docx"
+            await self._generate_docx(markdown_content,docx_path)
+            print("DEBUG: Generated DOCXs")
+
             # Save metadata
             metadata_path = output_dir / "report_metadata.json"
             metadata = {
@@ -737,7 +740,8 @@ class EnhancedReportFormatter:
             'Severity.HIGH': 'Alta',
             'Severity.MEDIUM': 'Media',
             'Severity.LOW': 'Baja',
-            'Severity.CRITICAL': 'Crítica'
+            'Severity.CRITICAL': 'Crítica',
+            'medium': 'Media'
         }
 
         if isinstance(problem, dict):
@@ -796,3 +800,107 @@ class EnhancedReportFormatter:
                         }
                     solutions.append(solution)
         return solutions 
+    
+    async def _generate_docx(self, markdown_content: str, output_path: Path) -> None:
+        """Generate DOCX from markdown content using python-docx"""
+        from docx import Document
+        from docx.shared import Pt, RGBColor, Inches
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        import re
+
+        document = Document()
+
+        # Set default font
+        style = document.styles['Normal']
+        style.font.name = 'Arial'
+        style.font.size = Pt(11)
+
+        def apply_inline_formatting(paragraph, text: str) -> None:
+            """Apply bold and italic formatting to text within a paragraph"""
+            # Handle bold text
+            if '**' in text:
+                parts = text.split('**')
+                for i, part in enumerate(parts):
+                    if i % 2 == 1:  # Bold sections
+                        run = paragraph.add_run(part)
+                        run.bold = True
+                    else:
+                        paragraph.add_run(part)
+                return
+
+            # Handle italic text
+            if '*' in text or '_' in text:
+                pattern = r'\*(.*?)\*|_(.*?)_'
+                matches = list(re.finditer(pattern, text))
+                if matches:
+                    last_end = 0
+                    for match in matches:
+                        # Add text before the italic
+                        if match.start() > last_end:
+                            paragraph.add_run(text[last_end:match.start()])
+                        # Add italic text
+                        italic_text = match.group(1) or match.group(2)
+                        run = paragraph.add_run(italic_text)
+                        run.italic = True
+                        last_end = match.end()
+                    # Add remaining text
+                    if last_end < len(text):
+                        paragraph.add_run(text[last_end:])
+                    return
+
+            # Plain text
+            paragraph.add_run(text)
+
+        # Process content line by line
+        lines = markdown_content.split('\n')
+        current_list = []
+        in_list = False
+
+        for line in lines:
+            line = line.rstrip()
+            
+            # Skip empty lines but handle list endings
+            if not line:
+                if in_list and current_list:
+                    # End the current list
+                    for item in current_list:
+                        list_para = document.add_paragraph(style='List Bullet')
+                        apply_inline_formatting(list_para, item)
+                    current_list = []
+                    in_list = False
+                continue
+
+            # Headers
+            if line.startswith('#'):
+                level = len(re.match(r'^#+', line).group())
+                text = line.strip('#').strip()
+                document.add_heading(text, level)
+                continue
+
+            # Lists
+            if line.strip().startswith(('- ', '* ', '+ ')):
+                in_list = True
+                item_text = line.strip()[2:].strip()
+                current_list.append(item_text)
+                continue
+
+            # Handle any pending list items before processing other content
+            if in_list and current_list:
+                for item in current_list:
+                    list_para = document.add_paragraph(style='List Bullet')
+                    apply_inline_formatting(list_para, item)
+                current_list = []
+                in_list = False
+
+            # Regular paragraphs
+            para = document.add_paragraph()
+            apply_inline_formatting(para, line)
+
+        # Handle any remaining list items
+        if current_list:
+            for item in current_list:
+                list_para = document.add_paragraph(style='List Bullet')
+                apply_inline_formatting(list_para, item)
+
+        # Save the document
+        document.save(str(output_path))

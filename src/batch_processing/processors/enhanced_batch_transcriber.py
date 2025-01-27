@@ -193,7 +193,6 @@ class EnhancedBatchTranscriber:
             # Step 1: Process location data
             location_data = self.location_processor.process_transcript(combined_transcript)
             
-            # THIS IS CALLING LOCATION PROCESSOR AGAIN!!! WHY?!
             # Step 2: Perform construction analysis
             visit_id = uuid.uuid4()
             analysis_result = self.construction_expert.analyze_visit(
